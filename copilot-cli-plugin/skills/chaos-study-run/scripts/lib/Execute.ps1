@@ -445,6 +445,7 @@ function Repair-ChaosConfigurationPermission {
     $scoping = @(
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
     )

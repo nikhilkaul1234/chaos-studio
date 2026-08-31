@@ -40,12 +40,6 @@ $sharedLib = Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib'
 . (Join-Path $sharedLib 'Study.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Compare.ps1')
 
-$indexArgs = @{}
-if ($StudyRoot) { $indexArgs['StudyRoot'] = $StudyRoot }
-$index = @(Get-ChaosStudyIndex @indexArgs -Rebuild)
-
-if ($ScopeHash) { $index = @($index | Where-Object { $_.scopeHash -eq $ScopeHash }) }
-
 function Get-StudyFindings {
     param([Parameter(Mandatory)][object]$Entry)
     $path = Join-Path $Entry.path 'findings.v1.json'
@@ -105,6 +99,31 @@ function ConvertTo-ChaosPowerShellLiteral {
     }
     return ConvertTo-ChaosPowerShellLiteral -Value ([string]$Value)
 }
+
+function ConvertTo-ChaosTagTable {
+    <#
+    .SYNOPSIS
+        Restore the authoring hashtable from persisted {key,value} tag pairs.
+    #>
+    param([AllowNull()][object[]]$Tags)
+
+    [hashtable]$table = @{}
+    foreach ($pair in @($Tags)) {
+        if ($null -eq $pair) { continue }
+        $key = if ($pair -is [System.Collections.IDictionary]) { [string]$pair['key'] } else { [string]$pair.key }
+        if ([string]::IsNullOrWhiteSpace($key)) { continue }
+        $table[$key] = if ($pair -is [System.Collections.IDictionary]) { $pair['value'] } else { $pair.value }
+    }
+    return $table
+}
+
+if ($MyInvocation.InvocationName -eq '.') { return }
+
+$indexArgs = @{}
+if ($StudyRoot) { $indexArgs['StudyRoot'] = $StudyRoot }
+$index = @(Get-ChaosStudyIndex @indexArgs -Rebuild)
+
+if ($ScopeHash) { $index = @($index | Where-Object { $_.scopeHash -eq $ScopeHash }) }
 
 if ($index.Count -eq 0) {
     Write-Card -Title 'No studies yet' -Status 'info' -Body @"
@@ -299,7 +318,10 @@ $($baseline.studyId) ($($comparison.baseline.verdict))
                 $replayLines += "    -ExcludeType $(ConvertTo-ChaosPowerShellLiteral -Value @($exclusions.types)) ``"
             }
             if ($exclusions.PSObject.Properties.Name -contains 'tags' -and $null -ne $exclusions.tags) {
-                $replayLines += "    -ExcludeTag $(ConvertTo-ChaosPowerShellLiteral -Value $exclusions.tags) ``"
+                $tagTable = ConvertTo-ChaosTagTable -Tags @($exclusions.tags)
+                if ($tagTable.Count -gt 0) {
+                    $replayLines += "    -ExcludeTag $(ConvertTo-ChaosPowerShellLiteral -Value $tagTable) ``"
+                }
             }
         }
         $command = @(
