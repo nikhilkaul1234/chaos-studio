@@ -235,6 +235,269 @@ function Get-ChaosScenarioParameterList {
     return $pairs
 }
 
+function Get-ChaosEffectiveScenarioParameterPreview {
+    <#
+    .SYNOPSIS
+        Merge frozen explicit values over service-reported scenario defaults.
+    #>
+    param([Parameter(Mandatory)][object]$Plan)
+
+    $explicit = [ordered]@{}
+    foreach ($entry in @($Plan.scenario.parameters)) {
+        if ($null -eq $entry -or [string]::IsNullOrWhiteSpace([string]$entry.key)) { continue }
+        $explicit[[string]$entry.key] = $entry.value
+    }
+
+    $result = @()
+    foreach ($spec in @($Plan.scenario.parameterSpec)) {
+        if ($null -eq $spec -or [string]::IsNullOrWhiteSpace([string]$spec.name)) { continue }
+        $name = [string]$spec.name
+        if ($explicit.Contains($name)) {
+            $result += [ordered]@{ key = $name; value = $explicit[$name]; source = 'explicit' }
+            $explicit.Remove($name)
+        } elseif ($spec.PSObject.Properties.Name -contains 'default' -and $null -ne $spec.default) {
+            $result += [ordered]@{ key = $name; value = $spec.default; source = 'service-default' }
+        }
+    }
+    foreach ($name in @($explicit.Keys | Sort-Object)) {
+        $result += [ordered]@{ key = $name; value = $explicit[$name]; source = 'explicit' }
+    }
+    return @($result)
+}
+
+function Get-ChaosActionParameterPreview {
+    <#
+    .SYNOPSIS
+        Render action parameter values without inventing omitted optional values.
+    #>
+    param([Parameter(Mandatory)][object]$Plan)
+
+    $schema = $Plan.action.parametersSchema
+    $values = [ordered]@{}
+    $sources = [ordered]@{}
+    $required = @()
+    $properties = $null
+    if ($null -ne $schema) {
+        if ($schema.PSObject.Properties.Name -contains 'required') {
+            $required = @($schema.required | Where-Object { $null -ne $_ } | ForEach-Object { [string]$_ })
+        }
+        if ($schema.PSObject.Properties.Name -contains 'properties') { $properties = $schema.properties }
+    }
+
+    $explicit = [ordered]@{}
+    foreach ($entry in @($Plan.scenario.parameters)) {
+        if ($null -eq $entry -or [string]::IsNullOrWhiteSpace([string]$entry.key)) { continue }
+        $explicit[[string]$entry.key] = $entry.value
+    }
+
+    if ($null -ne $properties) {
+        foreach ($property in @($properties.PSObject.Properties | Sort-Object -Property Name)) {
+            if ($explicit.Contains($property.Name)) {
+                $values[$property.Name] = $explicit[$property.Name]
+                $sources[$property.Name] = 'explicit'
+            } elseif ($property.Value.PSObject.Properties.Name -contains 'default' -and $null -ne $property.Value.default) {
+                $values[$property.Name] = $property.Value.default
+                $sources[$property.Name] = 'service-default'
+            }
+        }
+    }
+
+    $semantic = if ($values.Count -gt 0) {
+        'Effective action parameters are listed in values.'
+    } elseif ($required.Count -eq 0) {
+        'none required or supplied'
+    } else {
+        'required parameters are absent'
+    }
+    return [ordered]@{
+        semantic = $semantic
+        values    = $values
+        sources   = $sources
+        required  = @($required)
+    }
+}
+
+function Get-ChaosActionEffectPreview {
+    <#
+    .SYNOPSIS
+        Describe side effects strictly from live action identity and permissions.
+    #>
+    param([Parameter(Mandatory)][object]$Plan)
+
+    $identity = "$($Plan.action.canonicalId) $($Plan.action.name) $($Plan.action.displayName)"
+    $permissions = @($Plan.action.appliesTo | ForEach-Object { $_.requiredPermissions } | Where-Object { $_ })
+    $isComputeShutdown = (
+        $identity -match '(?i)(compute.*shutdown|shutdown.*compute)' -or
+        @($permissions | Where-Object { $_ -match '(?i)Microsoft\.Compute/.*/powerOff/action' }).Count -gt 0
+    )
+    $sideEffect = if ($isComputeShutdown) {
+        'Expected side effect: power off or shut down each exact Compute target listed below.'
+    } elseif (-not [string]::IsNullOrWhiteSpace([string]$Plan.action.description)) {
+        "Expected side effect from live action metadata: $($Plan.action.description)"
+    } else {
+        "Expected side effect: execute live-discovered action '$($Plan.action.displayName)' against only the exact targets listed below."
+    }
+
+    $recovery = if ([string]$Plan.action.actionType -ieq 'Cancelable') {
+        'Cancelable action: scenario-run cancellation is expected to stop or revert the active fault. Cancellation is not proof of restoration; post-recovery evidence must prove every target returned to its steady state.'
+    } elseif ([string]$Plan.action.actionType -ieq 'Continuous') {
+        'Continuous action: stopping the scenario run is expected to end the active fault. Post-recovery evidence must prove restoration rather than assume it.'
+    } else {
+        'This action is not reported as cancelable. Its service-defined completion behavior applies, and post-recovery evidence must prove restoration rather than assume it.'
+    }
+
+    return [ordered]@{
+        actionType = [string]$Plan.action.actionType
+        sideEffect = $sideEffect
+        recovery   = $recovery
+    }
+}
+
+function New-ChaosStudyDryRunPreview {
+    <#
+    .SYNOPSIS
+        Build the complete non-mutating run preview from one frozen plan.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$StudyId,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [Parameter(Mandatory)][object[]]$SignalPreview,
+        [Parameter(Mandatory)][bool]$LiveDiscoveryVerified
+    )
+
+    $blast = Get-ChaosBlastRadiusArgument -Plan $Plan
+    $scenarioParameters = @(Get-ChaosEffectiveScenarioParameterPreview -Plan $Plan)
+    $actionParameters = Get-ChaosActionParameterPreview -Plan $Plan
+    $effect = Get-ChaosActionEffectPreview -Plan $Plan
+    $targets = @($Plan.scope.projectedResources)
+    $abortDescriptions = @($Plan.safety.abortConditions | ForEach-Object {
+            Get-ChaosAbortConditionDescription -Condition $_
+        })
+    $nextStep = if ($LiveDiscoveryVerified) {
+        "chaos-study-run -StudyId $StudyId -PrepareApproval"
+    } else {
+        'Re-scope without -SkipDiscovery to create a fresh live-discovered plan.'
+    }
+
+    return [ordered]@{
+        studyId            = $StudyId
+        frozenPlanHash      = [string]$Plan.frozenConfigHash
+        hypothesis          = [string]$Plan.question.hypothesis
+        workspace           = [ordered]@{
+            subscriptionId = [string]$Plan.workspace.subscriptionId
+            resourceGroup  = [string]$Plan.workspace.resourceGroup
+            name           = [string]$Plan.workspace.name
+            region         = [string]$Plan.scope.region
+        }
+        scenario            = [ordered]@{
+            name                = [string]$Plan.scenario.name
+            effectiveParameters = $scenarioParameters
+        }
+        action              = [ordered]@{
+            name                = [string]$Plan.action.displayName
+            canonicalId         = [string]$Plan.action.canonicalId
+            actionType          = [string]$Plan.action.actionType
+            effectiveParameters = $actionParameters
+            expectedSideEffect  = $effect.sideEffect
+            restoration         = $effect.recovery
+        }
+        targets             = $targets
+        blastRadius         = [ordered]@{ filters = $blast.filters; exclusions = $blast.exclusions }
+        windows             = [ordered]@{
+            baselineMinutes = $Plan.windows.baselineMinutes
+            injectMinutes   = $Plan.windows.injectMinutes
+            recoveryMinutes = $Plan.windows.recoveryMinutes
+        }
+        telemetry           = @($Plan.signals.configuredSources)
+        abortConditions     = $abortDescriptions
+        configuration       = [ordered]@{
+            name      = $ConfigurationName
+            lifecycle = 'Dry-run creates no configuration. PrepareApproval and armed execution create a temporary configuration only when invoked. Cleanup always requests deletion; any cleanup failure is retained in evidence/cleanup/*.json.'
+        }
+        consent             = 'Armed execution requires a fresh human-typed phrase bound to this frozen plan hash after PrepareApproval displays the exact RBAC changes.'
+        signalPreview       = @($SignalPreview)
+        nextStep            = $nextStep
+    }
+}
+
+function Write-ChaosStudyDryRunPreview {
+    <#
+    .SYNOPSIS
+        Render the complete dry-run preview and its structured JSON contract.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$StudyId,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [Parameter(Mandatory)][object[]]$SignalPreview,
+        [Parameter(Mandatory)][bool]$LiveDiscoveryVerified
+    )
+
+    $preview = New-ChaosStudyDryRunPreview -Plan $Plan -StudyId $StudyId `
+        -ConfigurationName $ConfigurationName -SignalPreview $SignalPreview `
+        -LiveDiscoveryVerified $LiveDiscoveryVerified
+    $scenarioText = if (@($preview.scenario.effectiveParameters).Count -gt 0) {
+        ConvertTo-ChaosCanonicalJson -InputObject $preview.scenario.effectiveParameters
+    } else {
+        'none'
+    }
+    $actionText = if ($preview.action.effectiveParameters.values.Count -gt 0) {
+        ConvertTo-ChaosCanonicalJson -InputObject $preview.action.effectiveParameters.values
+    } else {
+        '{} (none required or supplied)'
+    }
+
+    Write-Card -Title "Dry run - study $StudyId" -Status 'info' -Body @"
+Nothing has been injected. Dry-run is non-mutating.
+
+$($preview.hypothesis)
+
+$($preview.action.expectedSideEffect)
+$($preview.action.restoration)
+
+Temporary configuration lifecycle: $($preview.configuration.lifecycle)
+"@ -Properties ([ordered]@{
+        'Frozen plan hash'    = $preview.frozenPlanHash
+        'Workspace'           = "$($preview.workspace.name) ($($preview.workspace.resourceGroup))"
+        'Region'              = $preview.workspace.region
+        'Exact targets'       = @($preview.targets).Count
+        'Scenario'            = $preview.scenario.name
+        'Scenario parameters' = $scenarioText
+        'Action'              = $preview.action.name
+        'Action URN'          = $preview.action.canonicalId
+        'Action parameters'   = $actionText
+        'Injection'           = "$($preview.windows.injectMinutes) minutes"
+        'Baseline'            = "$($preview.windows.baselineMinutes) minutes before injection"
+        'Recovery'            = "$($preview.windows.recoveryMinutes) minutes after injection"
+        'Configuration'       = $ConfigurationName
+    })
+
+    Write-Card -Title 'Exact frozen targets' -Status 'warning' -Body (
+        ConvertTo-ChaosCanonicalJson -InputObject $preview.targets
+    )
+    Write-Table -Title 'Evidence that would be collected' -Data @(
+        foreach ($signal in $SignalPreview) {
+            [pscustomobject]@{
+                Source = $signal.source
+                Status = if ($signal.caveat) { $signal.caveat } else { 'would be collected' }
+            }
+        }
+    )
+    if (@($preview.abortConditions).Count -gt 0) {
+        Write-Card -Title 'Abort if any of these happen' -Status 'warning' -Body (
+            @($preview.abortConditions | ForEach-Object { "  - $_" }) -join "`n"
+        )
+    }
+    Write-Card -Title 'Before an armed run' -Status 'info' -Body @"
+$($preview.consent)
+
+Next:
+  $($preview.nextStep)
+"@ -JsonPreview (ConvertTo-Json -InputObject $preview -Depth 32)
+
+}
+
 function Get-ChaosBlastRadiusArgument {
     <#
     .SYNOPSIS
@@ -333,7 +596,7 @@ function New-ChaosStudyConfiguration {
 function Remove-ChaosStudyConfiguration {
     <#
     .SYNOPSIS
-        Delete a scenario configuration, tolerating one that is already gone.
+        Delete a scenario configuration and return durable cleanup evidence.
     #>
     [CmdletBinding()]
     param(
@@ -341,7 +604,8 @@ function Remove-ChaosStudyConfiguration {
         [Parameter(Mandatory)][string]$ConfigurationName
     )
 
-    Invoke-AzChaos -AllowFailure -ChaosArgs @(
+    $requestedAt = Get-ChaosUtcNow
+    Invoke-AzChaos -ChaosArgs @(
         'scenario', 'config', 'delete',
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
@@ -350,6 +614,12 @@ function Remove-ChaosStudyConfiguration {
         '--scenario-name', $Plan.scenario.name,
         '--yes'
     ) | Out-Null
+    return [ordered]@{
+        configurationName = $ConfigurationName
+        requestedAt       = $requestedAt
+        deletionRequested = $true
+        failure           = $null
+    }
 }
 
 # -- Validation and permissions --------------------------------------------

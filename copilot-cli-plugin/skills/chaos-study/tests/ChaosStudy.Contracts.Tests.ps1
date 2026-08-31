@@ -475,6 +475,133 @@ Describe 'Automatic abort behavior' {
     }
 }
 
+Describe 'Dry-run rendering contract' {
+    It 'renders the exact frozen safety and lifecycle contract without mutation' {
+        $script:RenderedCards = @()
+        $script:RenderedTables = @()
+        Mock Write-Card {
+            $script:RenderedCards += [pscustomobject]@{
+                title      = $Title
+                status     = $Status
+                body       = $Body
+                properties = $Properties
+                json       = $JsonPreview
+            }
+        }
+        Mock Write-Table {
+            $script:RenderedTables += [pscustomobject]@{ title = $Title; data = $Data }
+        }
+
+        $targetId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm-one'
+        $plan = [pscustomobject]@{
+            frozenConfigHash = '82f7effed24bb9ba'
+            question = [pscustomobject]@{ hypothesis = 'The VM remains available during shutdown.' }
+            workspace = [pscustomobject]@{
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
+            scope = [pscustomobject]@{
+                region = 'westus2'
+                projectedResources = @([pscustomobject]@{
+                    resourceId = $targetId; resourceType = 'microsoft.compute/virtualmachines'
+                })
+                blastRadius = [pscustomobject]@{ filters = $null; exclusions = $null }
+            }
+            scenario = [pscustomobject]@{
+                name = 'ZoneDown-1.0'
+                parameters = @([pscustomobject]@{ key = 'mode'; value = 'explicit-mode' })
+                parameterSpec = @(
+                    [pscustomobject]@{ name = 'duration'; default = 'PT15M'; required = $false }
+                    [pscustomobject]@{ name = 'mode'; default = 'default-mode'; required = $false }
+                )
+            }
+            action = [pscustomobject]@{
+                name = 'microsoft-compute-shutdown'
+                displayName = 'shutdown'
+                canonicalId = 'urn:csci:microsoft:compute:shutdown/1.0.0'
+                actionType = 'Cancelable'
+                description = ''
+                appliesTo = @([pscustomobject]@{
+                    resourceType = 'Microsoft.Compute/virtualMachines'
+                    requiredPermissions = @(
+                        'Microsoft.Compute/virtualMachines/powerOff/action'
+                        'Microsoft.Compute/virtualMachines/start/action'
+                    )
+                })
+                parametersSchema = [pscustomobject]@{
+                    required = @()
+                    properties = [pscustomobject]@{
+                        GracefulShutdown = [pscustomobject]@{ type = 'boolean' }
+                    }
+                }
+            }
+            windows = [pscustomobject]@{
+                baselineMinutes = 15; injectMinutes = 15; recoveryMinutes = 15
+            }
+            signals = [pscustomobject]@{ configuredSources = @('metrics:VmAvailabilityMetric') }
+            safety = [pscustomobject]@{
+                abortConditions = @(
+                    [pscustomobject]@{
+                        description = 'Cancel if VmAvailabilityMetric falls below 1.'
+                    }
+                )
+            }
+        }
+        $signalPreview = @(
+            New-ChaosSignalResult -Source 'metrics:VmAvailabilityMetric' -Window preview `
+                -Caveat 'Dry run: no query was issued.'
+        )
+
+        $preview = New-ChaosStudyDryRunPreview -Plan $plan `
+            -StudyId '20260831T172419Z-c432bdce' `
+            -ConfigurationName 'study-20260831t172419zc432bdce' `
+            -SignalPreview $signalPreview -LiveDiscoveryVerified $true
+        Write-ChaosStudyDryRunPreview -Plan $plan `
+            -StudyId '20260831T172419Z-c432bdce' `
+            -ConfigurationName 'study-20260831t172419zc432bdce' `
+            -SignalPreview $signalPreview -LiveDiscoveryVerified $true |
+            Out-Null
+
+        $preview.frozenPlanHash | Should -Be '82f7effed24bb9ba'
+        ($preview.scenario.effectiveParameters | Where-Object key -eq 'duration').value |
+            Should -Be 'PT15M'
+        ($preview.scenario.effectiveParameters | Where-Object key -eq 'duration').source |
+            Should -Be 'service-default'
+        ($preview.scenario.effectiveParameters | Where-Object key -eq 'mode').value |
+            Should -Be 'explicit-mode'
+        $preview.action.effectiveParameters.values.Count | Should -Be 0
+        $preview.action.effectiveParameters.semantic | Should -Be 'none required or supplied'
+        $preview.targets[0].resourceId | Should -Be $targetId
+        $preview.telemetry[0] | Should -Be 'metrics:VmAvailabilityMetric'
+        $preview.windows.baselineMinutes | Should -Be 15
+
+        $rendered = ConvertTo-Json -InputObject $script:RenderedCards -Depth 32
+        $rendered | Should -Match '82f7effed24bb9ba'
+        $rendered | Should -Match 'PT15M'
+        $rendered | Should -Match 'explicit-mode'
+        $rendered | Should -Match '\{\} \(none required or supplied\)'
+        $rendered | Should -Match ([regex]::Escape($targetId))
+        $rendered | Should -Match '(?i)power off or shut down'
+        $rendered | Should -Match '(?i)Cancelable action'
+        $rendered | Should -Match '(?i)post-recovery evidence must prove'
+        $rendered | Should -Match '(?i)Dry-run creates no configuration'
+        $rendered | Should -Match '(?i)Cleanup always requests deletion'
+        $rendered | Should -Match 'evidence/cleanup/\*\.json'
+        $rendered | Should -Match '(?i)fresh human-typed phrase bound to this frozen plan hash'
+        $script:RenderedTables[0].data[0].Source | Should -Be 'metrics:VmAvailabilityMetric'
+    }
+
+    It 'surfaces configuration deletion failures to the caller' {
+        Mock Invoke-AzChaos { throw 'configuration delete failed' }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{ subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws' }
+            scenario = [pscustomobject]@{ name = 'scenario' }
+        }
+
+        { Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config } |
+            Should -Throw '*configuration delete failed*'
+    }
+}
+
 Describe 'Front-door forwarding and exit contracts' {
     BeforeAll {
         . $script:FrontDoor -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws `

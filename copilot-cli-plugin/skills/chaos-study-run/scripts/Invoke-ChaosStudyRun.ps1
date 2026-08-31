@@ -101,6 +101,15 @@ overwrite evidence from the first execution.
 
 Assert-ChaosPlanIntegrity -Plan $plan | Out-Null
 
+if ($KeepConfiguration) {
+    Write-ChaosStudyFailure -Title 'Configuration retention is not supported' -Message @"
+Study configurations are temporary safety artifacts and are deleted after
+PrepareApproval and armed execution. Retaining one would make the cleanup
+statement in the frozen preview false.
+"@ -Remediation 'Remove -KeepConfiguration. Cleanup failures are retained as evidence instead.'
+    exit (Get-ChaosStudyExitCode -Name 'Error')
+}
+
 $configurationName = Get-ChaosStudyConfigurationName -StudyId $study.studyId
 $sources = @($SignalSource)
 if ($sources.Count -eq 0 -and $plan.signals.configuredSources) {
@@ -118,19 +127,7 @@ injection=$($plan.windows.injectMinutes), recovery=$($plan.windows.recoveryMinut
 
 $liveDiscoveryVerified = Test-ChaosPlanLiveDiscovery -Plan $plan
 
-$projectedCount = $plan.scope.projectedResourceCount
-$projectedText = if ($null -eq $projectedCount) { '(not resolved)' } else { "$projectedCount of $($plan.scope.discoveredResourceCount) discovered" }
 $blast = Get-ChaosBlastRadiusArgument -Plan $plan
-$configPreview = [ordered]@{
-    workspace          = $plan.workspace.name
-    resourceGroup      = $plan.workspace.resourceGroup
-    scenario           = $plan.scenario.name
-    configuration      = $configurationName
-    parameters         = @(Get-ChaosScenarioParameterList -Plan $plan)
-    filters            = $blast.filters
-    exclusions         = $blast.exclusions
-    projectedResources = @($plan.scope.projectedResources)
-}
 
 # -- Human approval preparation --------------------------------------------
 
@@ -146,6 +143,7 @@ approval preview and can never arm.
 
     $approvalConfigurationName = "$configurationName-approval"
     $configurationCreated = $false
+    $approvalCleanupFailure = $null
     try {
         Write-ChaosStudyNote -Message "Creating temporary scenario configuration $approvalConfigurationName for approval preparation."
         New-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName | Out-Null
@@ -181,8 +179,27 @@ approval preview and can never arm.
             -Arguments @($approvalConfigurationName) -ExitCode 0 -Note "RBAC preview $($prepared.permissionFix.digest)" | Out-Null
     } finally {
         if ($configurationCreated) {
-            Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName
+            try {
+                Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName | Out-Null
+            } catch {
+                $approvalCleanupFailure = [ordered]@{
+                    configurationName = $approvalConfigurationName
+                    attemptedAt       = Get-ChaosUtcNow
+                    deletionRequested = $true
+                    failure           = Protect-ChaosSecret -Text $_.Exception.Message
+                }
+                Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/cleanup/approval-configuration.json' `
+                    -Content $approvalCleanupFailure | Out-Null
+            }
         }
+    }
+    if ($null -ne $approvalCleanupFailure) {
+        Write-ChaosStudyFailure -Title 'Temporary approval configuration cleanup failed' -Message @"
+Deletion of '$approvalConfigurationName' failed. The failure is retained at
+evidence/cleanup/approval-configuration.json. Approval cannot proceed while the
+temporary configuration may still exist.
+"@ -Remediation 'Delete the named configuration, verify it is gone, then run -PrepareApproval again.'
+        exit (Get-ChaosStudyExitCode -Name 'Error')
     }
 
     $permissionText = if (-not $approvalPreview.permissionFix.applicable) {
@@ -231,47 +248,9 @@ Then run:
 if ($DryRun) {
     $previewWindow = New-ChaosWindow -Name 'preview' -Start (ConvertTo-ChaosUtcIso -Instant (Get-Date).ToUniversalTime().AddMinutes(-1)) -End (Get-ChaosUtcNow)
     $preview = Invoke-ChaosSignalCollection -Plan $plan -Window $previewWindow -Sources $sources -DryRun
-
-    Write-Card -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
-Nothing has been injected. This is what would happen.
-
-$($plan.question.hypothesis)
-"@ -Properties ([ordered]@{
-        'Workspace'          = "$($plan.workspace.name) ($($plan.workspace.resourceGroup))"
-        'Region'             = if ($plan.scope.region) { $plan.scope.region } else { '(not resolved)' }
-        'Scoped resources'   = $projectedText
-        'Scenario'           = $plan.scenario.name
-        'Action'             = $plan.action.displayName
-        'Action URN'         = $(if ([string]::IsNullOrWhiteSpace($plan.action.canonicalId)) { '(not resolved - discovery skipped)' } else { [string]$plan.action.canonicalId })
-        'Injection'          = "$($plan.windows.injectMinutes) minutes"
-        'Baseline'           = "$($plan.windows.baselineMinutes) minutes before injection"
-        'Recovery'           = "$($plan.windows.recoveryMinutes) minutes after injection"
-        'Configuration'      = $configurationName
-    })
-
-    Write-Table -Title 'Evidence that would be collected' -Data @(
-        foreach ($signal in $preview) {
-            [pscustomobject]@{
-                Source = $signal.source
-                Status = if ($signal.caveat) { $signal.caveat } else { 'would be collected' }
-            }
-        }
-    )
-
-    if (@($plan.safety.abortConditions).Count -gt 0) {
-        Write-Card -Title 'Abort if any of these happen' -Status 'warning' -Body (
-            @($plan.safety.abortConditions | ForEach-Object { "  - $(Get-ChaosAbortConditionDescription -Condition $_)" }) -join "`n"
-        )
-    }
-
-    $nextStep = if ($liveDiscoveryVerified) {
-        "Prepare the exact RBAC preview and fresh human approval boundary:`n`n  chaos-study-run -StudyId $($study.studyId) -PrepareApproval"
-    } else {
-        'This offline/unverified plan cannot arm. Re-scope without -SkipDiscovery to create a fresh live-discovered plan.'
-    }
-    Write-Card -Title 'Before an armed run' -Status 'info' -Body @"
-$nextStep
-"@ -JsonPreview ($configPreview | ConvertTo-Json -Depth 20)
+    Write-ChaosStudyDryRunPreview -Plan $plan -StudyId $study.studyId `
+        -ConfigurationName $configurationName -SignalPreview $preview `
+        -LiveDiscoveryVerified $liveDiscoveryVerified
 
     Write-ChaosStudyNote -Message 'Dry run complete. Nothing was changed.'
     exit (Get-ChaosStudyExitCode -Name 'Success')
@@ -348,6 +327,7 @@ $permissionFix = $null
 $abortRecord = $null
 $abortChecks = @()
 $cancellation = $null
+$configurationCleanup = $null
 $outcome = 'unknown'
 $failureMessage = $null
 # Seeded because the run record is written even when the try block fails part
@@ -449,8 +429,21 @@ try {
         Write-ChaosStudyNote -Message "Cancelling scenario run $runId."
         $cancellation = Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId
     }
-    if ($configurationCreated -and -not $KeepConfiguration) {
-        Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $configurationName
+    if ($configurationCreated) {
+        try {
+            $configurationCleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $configurationName
+        } catch {
+            $configurationCleanup = [ordered]@{
+                configurationName = $configurationName
+                attemptedAt       = Get-ChaosUtcNow
+                deletionRequested = $true
+                failure           = Protect-ChaosSecret -Text $_.Exception.Message
+            }
+            Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/cleanup/run-configuration.json' `
+                -Content $configurationCleanup | Out-Null
+            if (-not $failureMessage) { $failureMessage = "Scenario configuration cleanup failed: $($configurationCleanup.failure)" }
+            $outcome = 'Failed'
+        }
     }
 }
 
@@ -501,7 +494,8 @@ $runRecord = [ordered]@{
         scenarioId       = $plan.scenario.id
         validationStatus = $validationStatus
         permissionFix    = $permissionFix
-        retained         = [bool]$KeepConfiguration
+        cleanup          = $configurationCleanup
+        retained         = ($null -ne $configurationCleanup -and $null -ne $configurationCleanup.failure)
     }
     scenarioRun   = [ordered]@{
         runId       = $runId
@@ -528,11 +522,13 @@ Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'run-record.v1.json'
 
 $status = if ($failureMessage) { 'error' } elseif ($coverage.missing -gt 0) { 'warning' } else { 'success' }
 $touched = if ($null -ne $runObservation -and $null -ne $runObservation.resourcesTouched) { $runObservation.resourcesTouched } else { 'not reported' }
+$completionBody = if ($null -ne $configurationCleanup -and $null -ne $configurationCleanup.failure) {
+    'The scenario run has stopped, but configuration cleanup failed. The failure is retained in evidence/cleanup/run-configuration.json. Evidence is recorded; it has not yet been interpreted.'
+} else {
+    'The scenario run has stopped and the temporary configuration has been cleaned up. Evidence is recorded; it has not yet been interpreted.'
+}
 
-Write-Card -Title "Run complete - study $($study.studyId)" -Status $status -Body @"
-The scenario run has stopped and the configuration has been cleaned up. Evidence
-is recorded; it has not yet been interpreted.
-"@ -Properties ([ordered]@{
+Write-Card -Title "Run complete - study $($study.studyId)" -Status $status -Body $completionBody -Properties ([ordered]@{
     'Scenario run'      = if ($runId) { $runId } else { '(never started)' }
     'Outcome'           = $outcome
     'Resources touched' = $touched
