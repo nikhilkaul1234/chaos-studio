@@ -29,7 +29,7 @@ $ChaosStudyApiVersions = [ordered]@{
     # Microsoft.Chaos/locations/{region}/actions - the live action inventory.
     # This suite ships no bundled list of faults; every action it can describe
     # is read from this endpoint at scope time and treated as authoritative.
-    chaosActions             = '2026-05-01-preview'
+    chaosActions             = '2026-08-01-preview'
     # Generic ARM resource read - used to resolve a scoped resource's region
     resources                = '2021-04-01'
     # Azure Monitor metrics - Microsoft.Insights/metrics

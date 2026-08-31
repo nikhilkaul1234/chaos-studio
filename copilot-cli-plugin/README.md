@@ -54,8 +54,9 @@ plugins:
 | **Copilot CLI plugin** | `plugin.json` | Host-specific packaging and discovery for the same skills |
 | **MCP server** | `mcp/` | Typed Chaos Studio tools for agent hosts that support MCP |
 
-Both target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login`
-session for auth.
+Both use the local `az login` session for auth. The study suite pins the
+workspace/scenario control plane to `2026-05-01-preview` and live Actions_List
+discovery to `2026-08-01-preview`.
 
 The skill method does not require Copilot CLI or MCP. A non-Copilot host may
 invoke the scripts directly, but it must keep `CHAOS_STUDY_ROOT` durable, retain
@@ -229,7 +230,9 @@ See [`docs/impact-synthesis-skill.md`](docs/impact-synthesis-skill.md) for a ful
 
 ## API Version
 
-All ARM calls target **`2026-05-01-preview`** (`Microsoft.Chaos` namespace).
+Workspace and scenario ARM calls target **`2026-05-01-preview`**. Live
+`Microsoft.Chaos/locations/{region}/actions` discovery targets
+**`2026-08-01-preview`**.
 
 ## License
 
