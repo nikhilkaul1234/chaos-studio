@@ -11,7 +11,10 @@ study store so a chat weeks later can pick up exactly where the last one left of
 The phase is portable to any shell-capable agent that can reopen the durable
 study store, retain artifact continuity across turns, and propagate exit codes.
 It calls no Azure API and never executes a printed rerun. Copilot CLI provides
-packaging only; SRE Agent consumption is intended but not yet validated here.
+packaging only. SRE Agent accepts the files, resolves uploaded paths, and exposes
+PowerShell 7.6.4 through `RunInTerminal`, but durable cross-thread study history
+and end-to-end Azure execution are not supported or validated there. SRE Agent
+remains an integration candidate.
 
 ## Principles
 

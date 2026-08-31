@@ -60,10 +60,14 @@ session for auth.
 The skill method does not require Copilot CLI or MCP. A non-Copilot host may
 invoke the scripts directly, but it must keep `CHAOS_STUDY_ROOT` durable, retain
 the study id between phases, show output without suppressing safety cards, and
-return non-zero phase exit codes to the caller. The strongest intended integrated
-consumer is SRE Agent because it can combine service context with this method,
-but SRE Agent installation and invocation have not yet been validated for this
-PR. Do not describe that path as supported until that validation is complete.
+return non-zero phase exit codes to the caller.
+
+SRE Agent accepts the suite files, resolves uploaded paths, and exposes
+PowerShell 7.6.4 through `RunInTerminal`. Its brokered Azure credentials are not
+inherited by that generic terminal, and the current `chaos-mcp` does not
+implement the full study contract. End-to-end Azure study execution in SRE Agent
+is therefore not supported or validated by this PR. SRE Agent remains an
+integration candidate for a future brokered Azure-command adapter.
 
 ## Skills
 
