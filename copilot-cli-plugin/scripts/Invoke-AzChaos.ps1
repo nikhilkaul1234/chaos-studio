@@ -159,7 +159,16 @@ function Invoke-AzChaos {
 
         if (-not $stdoutText) { return $null }
         try {
-            return (ConvertFrom-AzChaosJson -Text $stdoutText)
+            $parsed = ConvertFrom-AzChaosJson -Text $stdoutText
+            if (
+                $parsed -is [System.Collections.IEnumerable] -and
+                $parsed -isnot [string] -and
+                @($parsed).Count -eq 0
+            ) {
+                Write-Output -NoEnumerate $parsed
+                return
+            }
+            return $parsed
         } catch {
             return $stdoutText
         }
