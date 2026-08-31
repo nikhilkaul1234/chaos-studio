@@ -14,6 +14,7 @@ BeforeAll {
     $script:Study = Join-Path $script:SkillRoot 'scripts/lib/Study.ps1'
     $script:ScopeEntry = Join-Path $script:SkillsRoot 'chaos-study-scope/scripts/Invoke-ChaosStudyScope.ps1'
     $script:Workspace = Join-Path $script:SkillsRoot 'chaos-study-scope/scripts/lib/Workspace.ps1'
+    $script:ActionDiscovery = Join-Path $script:SkillsRoot 'chaos-study-scope/scripts/lib/ActionDiscovery.ps1'
     $script:Readiness = Join-Path $script:SkillsRoot 'chaos-study-scope/scripts/lib/Readiness.ps1'
     $script:RunEntry = Join-Path $script:SkillsRoot 'chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1'
     $script:Signals = Join-Path $script:SkillsRoot 'chaos-study-run/scripts/lib/Signals.ps1'
@@ -27,6 +28,7 @@ BeforeAll {
     . $script:Common
     . $script:Study
     . $script:Workspace
+    . $script:ActionDiscovery
     . $script:Readiness
     . $script:Signals
     . $script:Execute
@@ -220,6 +222,26 @@ Describe 'Chaos CLI response normalization' {
 
         $resource.resourceId | Should -BeNullOrEmpty
         $resource.location | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Live action discovery API contract' {
+    It 'builds the regional Actions_List request with the 2026-08-01-preview pin' {
+        Mock Invoke-AzRest {
+            [pscustomobject]@{
+                body = [pscustomobject]@{ value = @() }
+            }
+        }
+
+        Get-ChaosAvailableAction -SubscriptionId 'frozen-sub' -Region 'westus2' |
+            Out-Null
+
+        Should -Invoke Invoke-AzRest -Times 1 -ParameterFilter {
+            $Method -eq 'GET' -and
+            $Uri -eq '/subscriptions/frozen-sub/providers/Microsoft.Chaos/locations/westus2/actions' -and
+            $ApiVersion -eq '2026-08-01-preview'
+        }
+        Get-ChaosApiVersion -Name 'chaosActions' | Should -Be '2026-08-01-preview'
     }
 }
 
