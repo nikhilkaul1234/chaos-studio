@@ -145,6 +145,84 @@ Describe 'Blast-radius exclusions' {
     }
 }
 
+Describe 'Chaos CLI response normalization' {
+    It 'maps flattened workspace state and scopes' {
+        $workspace = ConvertTo-ChaosWorkspaceRecord -Workspace ([pscustomobject]@{
+            id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+            name = 'ws'
+            location = 'eastus2'
+            provisioningState = 'Succeeded'
+            scopes = @('/subscriptions/sub/resourceGroups/targets')
+            identity = [pscustomobject]@{ type = 'SystemAssigned'; principalId = 'principal' }
+        })
+
+        $workspace.provisioningState | Should -Be 'Succeeded'
+        @($workspace.scopes) | Should -HaveCount 1
+        $workspace.scopes[0] | Should -Be '/subscriptions/sub/resourceGroups/targets'
+    }
+
+    It 'maps prior nested workspace state and scopes' {
+        $workspace = ConvertTo-ChaosWorkspaceRecord -Workspace ([pscustomobject]@{
+            id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+            name = 'ws'
+            location = 'westus2'
+            properties = [pscustomobject]@{
+                provisioningState = 'Succeeded'
+                scopes = @('/subscriptions/sub/resourceGroups/targets')
+            }
+            identity = [pscustomobject]@{ type = 'UserAssigned'; principalId = 'principal' }
+        })
+
+        $workspace.provisioningState | Should -Be 'Succeeded'
+        $workspace.scopes[0] | Should -Be '/subscriptions/sub/resourceGroups/targets'
+    }
+
+    It 'maps the flattened discovered target instead of its Chaos child id' {
+        $childId = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/discoveredResources/child'
+        $targetId = '/subscriptions/sub/resourceGroups/targets/providers/Microsoft.Compute/virtualMachineScaleSets/vmss'
+        $resource = ConvertTo-ChaosScopedResourceRecord -Resource ([pscustomobject]@{
+            id = $childId
+            name = 'child'
+            fullyQualifiedIdentifier = $targetId
+            resourceType = 'microsoft.compute/virtualmachinescalesets'
+            location = 'eastus2'
+        })
+
+        $resource.resourceId | Should -Be $targetId
+        $resource.resourceId | Should -Not -Be $childId
+        $resource.resourceType | Should -Be 'microsoft.compute/virtualmachinescalesets'
+        $resource.location | Should -Be 'eastus2'
+    }
+
+    It 'maps the prior nested discovered target shape' {
+        $targetId = '/subscriptions/sub/resourceGroups/targets/providers/Microsoft.Compute/virtualMachines/vm'
+        $resource = ConvertTo-ChaosScopedResourceRecord -Resource ([pscustomobject]@{
+            id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/discoveredResources/child'
+            name = 'child'
+            properties = [pscustomobject]@{
+                resourceId = $targetId
+                type = 'microsoft.compute/virtualmachines'
+                location = 'westus2'
+            }
+        })
+
+        $resource.resourceId | Should -Be $targetId
+        $resource.resourceType | Should -Be 'microsoft.compute/virtualmachines'
+        $resource.location | Should -Be 'westus2'
+    }
+
+    It 'does not fabricate target identity or location from a discovered-resource child id' {
+        $resource = ConvertTo-ChaosScopedResourceRecord -Resource ([pscustomobject]@{
+            id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/discoveredResources/child'
+            name = 'child'
+            resourceType = 'microsoft.compute/virtualmachines'
+        })
+
+        $resource.resourceId | Should -BeNullOrEmpty
+        $resource.location | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Plan persistence and execution gates' {
     It 'hashes the same redacted representation that is persisted' {
         $path = Join-Path $TestDrive 'study-plan.v1.json'
