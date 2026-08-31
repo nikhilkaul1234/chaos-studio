@@ -14,8 +14,10 @@ This skill's job is to catch that before production is touched.
 The method is portable to any shell-capable agent that can run PowerShell and
 Azure CLI, preserve the returned study id and durable study store, propagate
 exit codes, and hand approval to a human. Copilot CLI packaging is not part of
-the execution contract. SRE Agent consumption is intended but not yet validated
-by this PR.
+the execution contract. SRE Agent accepts the files, resolves uploaded paths,
+and exposes PowerShell 7.6.4 through `RunInTerminal`, but its generic terminal
+does not inherit brokered Azure credentials. End-to-end Azure scoping is not
+supported or validated there; SRE Agent remains an integration candidate.
 
 ## Principles
 

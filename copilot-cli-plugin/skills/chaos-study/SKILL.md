@@ -74,9 +74,12 @@ The method is host-neutral. Any shell-capable agent may use it if the host can
 run PowerShell 7.4+ and Azure CLI 2.75+, preserve `CHAOS_STUDY_ROOT` and the
 study id across turns, display cards and stderr without suppression, propagate
 the documented exit codes, and halt for the human-origin approval boundary.
-Copilot CLI supplies plugin installation and discovery only. SRE Agent is the
-strongest intended integrated target, but this PR has not yet validated its
-skill-loading or invocation path.
+Copilot CLI supplies plugin installation and discovery only. SRE Agent accepts
+the suite files, resolves uploaded paths, and exposes PowerShell 7.6.4 through
+`RunInTerminal`, but its generic terminal does not inherit brokered Azure
+credentials. End-to-end Azure study execution there is not supported or
+validated by this PR; SRE Agent is an integration candidate for a future
+brokered Azure-command adapter.
 
 ## Usage
 

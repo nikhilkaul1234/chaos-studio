@@ -119,8 +119,11 @@ starts the run rather than to the order of statements in one caller.
 The host must run PowerShell 7.4+ and Azure CLI 2.75+, preserve
 `CHAOS_STUDY_ROOT` and the study id across invocations, display all preview and
 failure output, propagate exit codes, and stop after `-PrepareApproval`. Copilot
-CLI is one packaging host, not a runtime dependency. SRE Agent is an intended
-integrated target but has not yet been validated for this PR.
+CLI is one packaging host, not a runtime dependency. SRE Agent accepts the files,
+resolves uploaded paths, and exposes PowerShell 7.6.4 through `RunInTerminal`,
+but its generic terminal does not inherit brokered Azure credentials. End-to-end
+approval and execution are not supported or validated there; SRE Agent remains
+an integration candidate.
 
 The configuration is built from what the plan captured live at scope time: the
 scenario, its parameters as the `{key,value}` pairs the service takes, and the

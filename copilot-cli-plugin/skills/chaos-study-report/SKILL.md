@@ -10,8 +10,10 @@ importantly — what they do **not** mean.
 
 Any shell-capable agent may invoke this phase if it preserves the study store and
 study id from prior phases and propagates exit codes. It calls no Azure API.
-Copilot CLI is packaging only; SRE Agent consumption is intended but not yet
-validated by this PR.
+Copilot CLI is packaging only. SRE Agent accepts the files, resolves uploaded
+paths, and exposes PowerShell 7.6.4 through `RunInTerminal`, but end-to-end study
+artifact continuity and the preceding Azure-backed phases are not supported or
+validated there. SRE Agent remains an integration candidate.
 
 ## Principles
 
