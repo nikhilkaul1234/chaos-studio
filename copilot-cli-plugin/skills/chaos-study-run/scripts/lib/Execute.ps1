@@ -596,7 +596,7 @@ function New-ChaosStudyConfiguration {
 function Remove-ChaosStudyConfiguration {
     <#
     .SYNOPSIS
-        Delete a scenario configuration and return durable cleanup evidence.
+        Delete a scenario configuration and reconcile a service/LRO error once.
     #>
     [CmdletBinding()]
     param(
@@ -604,21 +604,98 @@ function Remove-ChaosStudyConfiguration {
         [Parameter(Mandatory)][string]$ConfigurationName
     )
 
+    $resourceId = "$($Plan.workspace.id)/scenarios/$($Plan.scenario.name)/configurations/$ConfigurationName"
     $requestedAt = Get-ChaosUtcNow
-    Invoke-AzChaos -ChaosArgs @(
-        'scenario', 'config', 'delete',
-        '-n', $ConfigurationName,
+    try {
+        Invoke-AzChaos -ChaosArgs @(
+            'scenario', 'config', 'delete',
+            '-n', $ConfigurationName,
+            '-g', $Plan.workspace.resourceGroup,
+            '--subscription', $Plan.workspace.subscriptionId,
+            '--workspace-name', $Plan.workspace.name,
+            '--scenario-name', $Plan.scenario.name,
+            '--yes'
+        ) | Out-Null
+        return [ordered]@{
+            configurationName = $ConfigurationName
+            resourceId        = $resourceId
+            requestedAt       = $requestedAt
+            deletionRequested = $true
+            effective         = $true
+            certainty         = 'delete-reported-success'
+            serviceError      = $null
+            reconciliation    = $null
+        }
+    } catch {
+        $serviceError = Protect-ChaosSecret -Text $_.Exception.Message
+        $reconciliation = Get-ChaosConfigurationCleanupReconciliation -Plan $Plan `
+            -ConfigurationName $ConfigurationName -ResourceId $resourceId
+        return [ordered]@{
+            configurationName = $ConfigurationName
+            resourceId        = $resourceId
+            requestedAt       = $requestedAt
+            deletionRequested = $true
+            effective         = ($reconciliation.state -eq 'absent')
+            certainty         = if ($reconciliation.state -eq 'absent') { 'effective-with-service-error' } else { 'cleanup-uncertain' }
+            serviceError      = $serviceError
+            reconciliation    = $reconciliation
+        }
+    }
+}
+
+function Get-ChaosConfigurationCleanupReconciliation {
+    <#
+    .SYNOPSIS
+        Perform one read-only scoped list after a delete error.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [Parameter(Mandatory)][string]$ResourceId
+    )
+
+    $checkedAt = Get-ChaosUtcNow
+    $response = Invoke-AzChaos -AllowFailure -ChaosArgs @(
+        'scenario', 'config', 'list',
         '-g', $Plan.workspace.resourceGroup,
         '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
-        '--scenario-name', $Plan.scenario.name,
-        '--yes'
-    ) | Out-Null
+        '--scenario-name', $Plan.scenario.name
+    )
+    if ($null -eq $response) {
+        return [ordered]@{
+            state      = 'inconclusive'
+            checkedAt  = $checkedAt
+            resourceId = $ResourceId
+            detail     = 'The read-only configuration list returned no usable result.'
+        }
+    }
+
+    $items = if (
+        $response -isnot [string] -and
+        $response.PSObject.Properties.Name -contains 'value'
+    ) {
+        @($response.value)
+    } elseif ($response -is [System.Collections.IEnumerable] -and $response -isnot [string]) {
+        @($response)
+    } else {
+        @($response)
+    }
+    $matches = @($items | Where-Object {
+            if ($null -eq $_) { return $false }
+            $name = if ($_.PSObject.Properties.Name -contains 'name') { [string]$_.name } else { $null }
+            $id = if ($_.PSObject.Properties.Name -contains 'id') { [string]$_.id } else { $null }
+            return ($name -ceq $ConfigurationName -or $id -ceq $ResourceId)
+        })
     return [ordered]@{
-        configurationName = $ConfigurationName
-        requestedAt       = $requestedAt
-        deletionRequested = $true
-        failure           = $null
+        state      = if ($matches.Count -eq 0) { 'absent' } else { 'present' }
+        checkedAt  = $checkedAt
+        resourceId = $ResourceId
+        detail     = if ($matches.Count -eq 0) {
+            'The exact configuration was absent from the scoped configuration list.'
+        } else {
+            'The exact configuration remained present in the scoped configuration list.'
+        }
     }
 }
 
@@ -677,14 +754,102 @@ function Get-ChaosValidationError {
     $container = if ($Validation.PSObject.Properties.Name -contains 'properties' -and $null -ne $Validation.properties) { $Validation.properties } else { $Validation }
 
     $errors = @()
-    foreach ($field in @('validationErrors', 'errors')) {
-        if ($container.PSObject.Properties.Name -notcontains $field) { continue }
-        foreach ($item in @($container.$field)) {
+    if ($container.PSObject.Properties.Name -contains 'errors') {
+        foreach ($item in @($container.errors)) {
             if ($null -eq $item) { continue }
             $errors += [ordered]@{
-                code     = if ($item.PSObject.Properties.Name -contains 'errorCode') { [string]$item.errorCode } else { $null }
-                message  = if ($item.PSObject.Properties.Name -contains 'errorMessage') { [string]$item.errorMessage } else { [string]$item }
+                source   = 'errors'
+                category = 'system'
+                repairable = $false
+                code     = if ($item.PSObject.Properties.Name -contains 'errorCode') {
+                    [string]$item.errorCode
+                } elseif ($item.PSObject.Properties.Name -contains 'code') {
+                    [string]$item.code
+                } else { $null }
+                message  = if ($item.PSObject.Properties.Name -contains 'errorMessage') {
+                    [string]$item.errorMessage
+                } elseif ($item.PSObject.Properties.Name -contains 'message') {
+                    [string]$item.message
+                } else { [string]$item }
                 resource = if ($item.PSObject.Properties.Name -contains 'resourceId') { [string]$item.resourceId } else { $null }
+                details  = Protect-ChaosObject -InputObject $item
+            }
+        }
+    }
+
+    if ($container.PSObject.Properties.Name -contains 'validationErrors' -and $null -ne $container.validationErrors) {
+        $validationErrors = $container.validationErrors
+
+        if ($validationErrors.PSObject.Properties.Name -contains 'permission') {
+            foreach ($item in @($validationErrors.permission)) {
+                if ($null -eq $item) { continue }
+                $recommendedRoles = @()
+                if ($item.PSObject.Properties.Name -contains 'recommendedRoles') {
+                    $recommendedRoles = @($item.recommendedRoles | Where-Object { $_ })
+                }
+                $requiredPermissions = @()
+                foreach ($field in @('missingPermissions', 'requiredPermissions')) {
+                    if ($item.PSObject.Properties.Name -contains $field) {
+                        $requiredPermissions += @($item.$field | Where-Object { $_ })
+                    }
+                }
+                $errors += [ordered]@{
+                    source      = 'validationErrors.permission'
+                    category    = 'permission'
+                    repairable  = ($recommendedRoles.Count -gt 0 -and $requiredPermissions.Count -gt 0)
+                    code        = 'PermissionValidation'
+                    message     = if ($item.PSObject.Properties.Name -contains 'errorMessage' -and $item.errorMessage) {
+                        [string]$item.errorMessage
+                    } else {
+                        'The service reported missing permissions for this resource.'
+                    }
+                    resource    = if ($item.PSObject.Properties.Name -contains 'resourceId') { [string]$item.resourceId } else { $null }
+                    details     = Protect-ChaosObject -InputObject $item
+                }
+            }
+        }
+
+        if ($validationErrors.PSObject.Properties.Name -contains 'resource') {
+            foreach ($item in @($validationErrors.resource)) {
+                if ($null -eq $item) { continue }
+                $errors += [ordered]@{
+                    source      = 'validationErrors.resource'
+                    category    = 'resource-state'
+                    repairable  = $false
+                    code        = if ($item.PSObject.Properties.Name -contains 'errorCode') { [string]$item.errorCode } else { 'ResourceState' }
+                    message     = if ($item.PSObject.Properties.Name -contains 'errorMessage') { [string]$item.errorMessage } else { [string]$item }
+                    resource    = if ($item.PSObject.Properties.Name -contains 'resourceId') { [string]$item.resourceId } else { $null }
+                    details     = Protect-ChaosObject -InputObject $item
+                }
+            }
+        }
+
+        $known = @('permission', 'resource', 'errorCode', 'errorMessage')
+        foreach ($property in @($validationErrors.PSObject.Properties)) {
+            if ($known -contains $property.Name -or $null -eq $property.Value) { continue }
+            $errors += [ordered]@{
+                source      = "validationErrors.$($property.Name)"
+                category    = 'metadata'
+                repairable  = $false
+                code        = [string]$property.Name
+                message     = 'The validation payload contained additional non-permission metadata.'
+                resource    = $null
+                details     = Protect-ChaosObject -InputObject $property.Value
+            }
+        }
+
+        if (
+            $validationErrors.PSObject.Properties.Name -contains 'errorCode' -or
+            $validationErrors.PSObject.Properties.Name -contains 'errorMessage'
+        ) {
+            $errors += [ordered]@{
+                source      = 'validationErrors'
+                category    = 'unknown'
+                repairable  = $false
+                code        = if ($validationErrors.PSObject.Properties.Name -contains 'errorCode') { [string]$validationErrors.errorCode } else { $null }
+                message     = if ($validationErrors.PSObject.Properties.Name -contains 'errorMessage') { [string]$validationErrors.errorMessage } else { 'Unknown validation error.' }
+                resource    = $null
+                details     = Protect-ChaosObject -InputObject $validationErrors
             }
         }
     }
@@ -760,29 +925,6 @@ function Get-ChaosPermissionFixSummary {
     }
 }
 
-function Test-ChaosPermissionFixApplicable {
-    <#
-    .SYNOPSIS
-        Decide whether a --what-if preview describes grants worth applying.
-
-    .DESCRIPTION
-        Applying changes who can reach the scoped resources, so it happens only
-        when the service actually named grants to make. A preview that reports
-        nothing - because the call failed, returned no body, or found nothing
-        to grant - is not read as permission to widen access. The validation
-        gate then refuses the run and says why, which is the honest outcome.
-    #>
-    param([AllowNull()][object]$FixResult)
-
-    $summary = Get-ChaosPermissionFixSummary -FixResult $FixResult
-    if ($null -eq $summary) { return $false }
-    if ($null -eq $summary.totalRequired) { return $false }
-
-    $total = 0
-    if ([int]::TryParse([string]$summary.totalRequired, [ref]$total)) { return ($total -gt 0) }
-    return $false
-}
-
 function Format-ChaosPermissionFixSummary {
     <#
     .SYNOPSIS
@@ -845,36 +987,98 @@ function Get-ChaosStudyApprovalPreview {
 
     $validation = Get-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName
     $status = Get-ChaosValidationStatus -Validation $validation
+    $validationErrors = @(Get-ChaosValidationError -Validation $validation)
+    $repairablePermissionErrors = @($validationErrors | Where-Object {
+            $_.category -eq 'permission' -and $_.repairable -eq $true
+        })
     $permissionPreview = $null
-    if ($status -ne 'Succeeded') {
+    $permissionAttempted = (
+        $status -ne 'Succeeded' -and
+        $repairablePermissionErrors.Count -gt 0 -and
+        $repairablePermissionErrors.Count -eq $validationErrors.Count
+    )
+    if ($permissionAttempted) {
         $permissionPreview = Repair-ChaosConfigurationPermission -Plan $Plan -ConfigurationName $ConfigurationName -WhatIf
     }
-    $approval = Get-ChaosPermissionFixApproval -FixResult $permissionPreview
-    $applicable = Test-ChaosPermissionFixApplicable -FixResult $permissionPreview
+
+    $approval = if ($null -ne $permissionPreview) {
+        Get-ChaosPermissionFixApproval -FixResult $permissionPreview
+    } else {
+        [pscustomobject]@{ details = @(); digest = $null }
+    }
     $summary = Get-ChaosPermissionFixSummary -FixResult $permissionPreview
+    $whatIfCompleted = (
+        $null -ne $summary -and
+        $summary.whatIfMode -eq $true -and
+        [string]$summary.state -eq 'WhatIfCompleted'
+    )
     $reportedCount = 0
     $hasReportedCount = (
         $null -ne $summary -and
         $null -ne $summary.totalRequired -and
         [int]::TryParse([string]$summary.totalRequired, [ref]$reportedCount)
     )
-    $exact = (
-        -not $applicable -or
-        ($hasReportedCount -and $reportedCount -gt 0 -and @($approval.details).Count -eq $reportedCount)
+    $authoritativeAssignments = (
+        $whatIfCompleted -and
+        $hasReportedCount -and
+        $reportedCount -ge 0 -and
+        @($approval.details).Count -eq $reportedCount
     )
+    $applicable = ($authoritativeAssignments -and $reportedCount -gt 0)
+    $validationSucceeded = ($status -eq 'Succeeded')
+    $exact = ($validationSucceeded -or $authoritativeAssignments)
+    $digest = if ($validationSucceeded) {
+        (Get-ChaosPermissionFixApproval -FixResult $null).digest
+    } elseif ($authoritativeAssignments) {
+        $approval.digest
+    } else {
+        $null
+    }
 
     return [pscustomobject]@{
         validationStatus = $status
-        validationErrors = @(Get-ChaosValidationError -Validation $validation)
+        validationErrors = $validationErrors
         permissionFix    = [ordered]@{
+            attempted  = $permissionAttempted
             applicable = [bool]$applicable
             exact      = [bool]$exact
+            authoritative = [bool]($validationSucceeded -or $authoritativeAssignments)
             summary    = $summary
             details    = $approval.details
-            digest     = $approval.digest
+            digest     = $digest
         }
-        approvalReady   = ($status -eq 'Succeeded' -or ($applicable -and $exact))
+        approvalReady   = ($validationSucceeded -or ($applicable -and $exact))
     }
+}
+
+function Format-ChaosApprovalPermissionStatus {
+    param([Parameter(Mandatory)][object]$ApprovalPreview)
+
+    if ([string]$ApprovalPreview.validationStatus -eq 'Succeeded') {
+        return 'Validation succeeded without repair. Permission repair was not attempted, and no RBAC changes are required by this validation.'
+    }
+    if (-not $ApprovalPreview.permissionFix.attempted) {
+        return "Backend validation failed with non-repairable errors. Permission repair was not attempted, and no authoritative RBAC preview exists.`n`n$(ConvertTo-ChaosCanonicalJson -InputObject $ApprovalPreview.validationErrors)"
+    }
+    if (-not $ApprovalPreview.permissionFix.exact) {
+        return "Permission what-if did not return an authoritative complete assignment set. Validation remains '$($ApprovalPreview.validationStatus)', so approval is not ready."
+    }
+    if (-not $ApprovalPreview.permissionFix.applicable) {
+        return "Permission what-if completed but returned no applicable assignments. Validation remains '$($ApprovalPreview.validationStatus)', so approval is not ready."
+    }
+    return "Applying these assignments requires Microsoft.Authorization/roleAssignments/write on every listed scope.`n`n$(ConvertTo-ChaosCanonicalJson -InputObject $ApprovalPreview.permissionFix.details)"
+}
+
+function Format-ChaosCleanupStatus {
+    param([AllowNull()][object]$Cleanup)
+
+    if ($null -eq $Cleanup -or -not $Cleanup.effective) {
+        return 'Cleanup is uncertain. The exact configuration identity, original service error, and read-only reconciliation result must be retained; execution remains fail-closed.'
+    }
+    if ($null -ne $Cleanup.serviceError) {
+        return 'Cleanup is effective despite a service/LRO error. The original error is retained, one read-only reconciliation found the exact configuration absent, and no second DELETE was issued.'
+    }
+    return 'Cleanup completed without a reported service error.'
 }
 
 function Resolve-ChaosConfigurationValidation {
@@ -932,9 +1136,35 @@ without them. No grants were applied and no scenario was started.
     }
 
     $statusText = if ($status) { $status } else { 'no status' }
+    $validationErrors = @(Get-ChaosValidationError -Validation $validation)
     $before = [ordered]@{
         status = $status
-        errors = @(Get-ChaosValidationError -Validation $validation)
+        errors = $validationErrors
+    }
+
+    $repairablePermissionErrors = @($validationErrors | Where-Object {
+            $_.category -eq 'permission' -and $_.repairable -eq $true
+        })
+    if (
+        $repairablePermissionErrors.Count -eq 0 -or
+        $repairablePermissionErrors.Count -ne $validationErrors.Count
+    ) {
+        Write-ChaosStudyNote -Message "Validation reported '$statusText' with no repairable permission errors. Permission repair was not attempted." -Level 'warn'
+        return [pscustomobject]@{
+            validation    = $validation
+            status        = $status
+            permissionFix = [ordered]@{
+                attempted        = $false
+                applicable       = $false
+                approvedDigest   = $ApprovedPermissionDigest
+                previewDigest    = $null
+                previewDetails   = @()
+                preview          = $null
+                applied          = $null
+                validationBefore = $before
+                validationAfter  = $before
+            }
+        }
     }
 
     Write-ChaosStudyNote -Message "Validation reported '$statusText'. Asking Chaos Studio which role assignments are missing." -Level 'warn'
@@ -942,15 +1172,30 @@ without them. No grants were applied and no scenario was started.
     $preview = Repair-ChaosConfigurationPermission -Plan $Plan -ConfigurationName $ConfigurationName -WhatIf
     $previewSummary = Get-ChaosPermissionFixSummary -FixResult $preview
     $currentApproval = Get-ChaosPermissionFixApproval -FixResult $preview
-    $applicable = Test-ChaosPermissionFixApplicable -FixResult $preview
+    $reportedCount = 0
+    $hasReportedCount = (
+        $null -ne $previewSummary -and
+        $null -ne $previewSummary.totalRequired -and
+        [int]::TryParse([string]$previewSummary.totalRequired, [ref]$reportedCount)
+    )
+    $authoritative = (
+        $null -ne $previewSummary -and
+        $previewSummary.whatIfMode -eq $true -and
+        [string]$previewSummary.state -eq 'WhatIfCompleted' -and
+        $hasReportedCount -and
+        $reportedCount -ge 0 -and
+        @($currentApproval.details).Count -eq $reportedCount
+    )
+    $applicable = ($authoritative -and $reportedCount -gt 0)
 
-    if ($currentApproval.digest -cne $ApprovedPermissionDigest) {
+    if (-not $authoritative -or $currentApproval.digest -cne $ApprovedPermissionDigest) {
         Write-ChaosStudyFailure -Title 'Permission preview changed' -Message @"
-The exact role-assignment preview returned by Chaos Studio no longer matches the
-preview the human approved. No grants were applied and no scenario was started.
+The role-assignment preview is not an authoritative completed what-if result, or
+it no longer matches the preview the human approved. No grants were applied and
+no scenario was started.
 
 Approved digest: $ApprovedPermissionDigest
-Current digest:  $($currentApproval.digest)
+Current digest:  $(if ($authoritative) { $currentApproval.digest } else { '(not authoritative)' })
 "@ -Remediation 'Run chaos-study-run -PrepareApproval again, review the current exact preview, then obtain fresh human approval.'
         exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
     }

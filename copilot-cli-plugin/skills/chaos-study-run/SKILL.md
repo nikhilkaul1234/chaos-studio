@@ -33,7 +33,10 @@ started and fresh approval is required. Only the exact approved preview may be
 applied before validation is repeated. Each preview entry identifies the target
 resource, principal, role definition, and assignment scope. Applying it requires
 the caller to hold `Microsoft.Authorization/roleAssignments/write` on those
-scopes (normally Owner or User Access Administrator).
+scopes (normally Owner or User Access Administrator). Permission what-if runs
+only for concrete, service-reported permission errors with repair data; backend,
+resource-state, metadata, and unknown validation errors remain separate failures
+and never become approval-ready.
 
 **Offline plans never arm.** `-SkipDiscovery` plans remain useful planning
 artifacts, but `-PrepareApproval`, `-Force`, and `-Consent` cannot make one
@@ -57,7 +60,10 @@ would rather say *not measured* than mislead.
 `finally` block, so a crash, a Ctrl-C, or a failed collection still tears it
 down. A run still in flight is cancelled. `-KeepConfiguration` is rejected;
 cleanup failures are retained in `evidence/cleanup/*.json` instead of being
-hidden or treated as successful cleanup.
+hidden or treated as successful cleanup. If DELETE reports a service/LRO error,
+one read-only scoped configuration-list reconciliation checks the exact resource.
+Absence records effective cleanup with the original error retained; presence or
+an inconclusive read remains fail-closed. No second DELETE is issued automatically.
 
 **Sealed studies are immutable.** Re-running a sealed study exits `13`. Re-test
 by scoping a new one, so history stays comparable.

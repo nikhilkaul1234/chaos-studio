@@ -321,11 +321,26 @@ Describe 'Plan persistence and execution gates' {
 
     It 'arms approval only when every reported RBAC change is enumerated' {
         Mock Get-ChaosConfigurationValidation {
-            [pscustomobject]@{ properties = [pscustomobject]@{ status = 'RequiresAttention'; validationErrors = @() } }
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    validationErrors = [pscustomobject]@{
+                        permission = @([pscustomobject]@{
+                            resourceId = '/r/one'
+                            missingPermissions = @('Microsoft.Compute/virtualMachines/powerOff/action')
+                            requiredPermissions = @('Microsoft.Compute/virtualMachines/powerOff/action')
+                            recommendedRoles = @('/roles/reader')
+                        })
+                        resource = @()
+                    }
+                }
+            }
         }
         Mock Repair-ChaosConfigurationPermission {
             [pscustomobject]@{
                 properties = [pscustomobject]@{
+                    state = 'WhatIfCompleted'
+                    whatIfMode = $true
                     summary = [pscustomobject]@{ totalRequired = 1; succeeded = 0; failed = 0; skipped = 0 }
                     roleAssignments = @([pscustomobject]@{
                         targetResourceId = '/r/one'; principalId = 'principal'; roleDefinitionId = '/roles/reader'
@@ -338,16 +353,33 @@ Describe 'Plan persistence and execution gates' {
         $preview = Get-ChaosStudyApprovalPreview -Plan (New-LivePlan) -ConfigurationName config
 
         $preview.approvalReady | Should -BeTrue
+        $preview.permissionFix.attempted | Should -BeTrue
         $preview.permissionFix.exact | Should -BeTrue
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 1
     }
 
     It 'refuses approval when the service reports RBAC changes without exact assignments' {
         Mock Get-ChaosConfigurationValidation {
-            [pscustomobject]@{ properties = [pscustomobject]@{ status = 'RequiresAttention'; validationErrors = @() } }
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    validationErrors = [pscustomobject]@{
+                        permission = @([pscustomobject]@{
+                            resourceId = '/r/one'
+                            missingPermissions = @('Microsoft.Compute/virtualMachines/powerOff/action')
+                            requiredPermissions = @('Microsoft.Compute/virtualMachines/powerOff/action')
+                            recommendedRoles = @('/roles/reader')
+                        })
+                        resource = @()
+                    }
+                }
+            }
         }
         Mock Repair-ChaosConfigurationPermission {
             [pscustomobject]@{
                 properties = [pscustomobject]@{
+                    state = 'WhatIfCompleted'
+                    whatIfMode = $true
                     summary = [pscustomobject]@{ totalRequired = 1; succeeded = 0; failed = 0; skipped = 0 }
                     roleAssignments = @()
                 }
@@ -358,6 +390,156 @@ Describe 'Plan persistence and execution gates' {
 
         $preview.approvalReady | Should -BeFalse
         $preview.permissionFix.exact | Should -BeFalse
+        $preview.permissionFix.digest | Should -BeNullOrEmpty
+        (Format-ChaosApprovalPermissionStatus -ApprovalPreview $preview) |
+            Should -Match '(?i)did not return an authoritative complete assignment set'
+    }
+
+    It 'preserves InternalError without attempting permission repair or creating an approval digest' {
+        Mock Get-ChaosConfigurationValidation {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    errors = @([pscustomobject]@{
+                        errorCode = 'InternalError'
+                        errorMessage = 'An internal error occurred. Operation: performing RBAC validation.'
+                    })
+                }
+            }
+        }
+        Mock Repair-ChaosConfigurationPermission { throw 'must not be called' }
+
+        $preview = Get-ChaosStudyApprovalPreview -Plan (New-LivePlan) -ConfigurationName config
+
+        $preview.validationStatus | Should -Be 'RequiresAttention'
+        $preview.validationErrors | Should -HaveCount 1
+        $preview.validationErrors[0].code | Should -Be 'InternalError'
+        $preview.validationErrors[0].category | Should -Be 'system'
+        $preview.validationErrors[0].repairable | Should -BeFalse
+        $preview.permissionFix.attempted | Should -BeFalse
+        $preview.permissionFix.applicable | Should -BeFalse
+        $preview.permissionFix.exact | Should -BeFalse
+        $preview.permissionFix.digest | Should -BeNullOrEmpty
+        $preview.approvalReady | Should -BeFalse
+        (Format-ChaosApprovalPermissionStatus -ApprovalPreview $preview) |
+            Should -Match '(?i)Backend validation failed.*Permission repair was not attempted'
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 0
+    }
+
+    It 'does not turn a non-success validation into success when permission preview is non-applicable' {
+        Mock Get-ChaosConfigurationValidation {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    validationErrors = [pscustomobject]@{
+                        permission = @([pscustomobject]@{
+                            resourceId = '/r/one'
+                            missingPermissions = @('read')
+                            recommendedRoles = @('/roles/reader')
+                        })
+                        resource = @()
+                    }
+                }
+            }
+        }
+        Mock Repair-ChaosConfigurationPermission {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    state = 'WhatIfCompleted'
+                    whatIfMode = $true
+                    summary = [pscustomobject]@{ totalRequired = 0; succeeded = 0; failed = 0; skipped = 0 }
+                    roleAssignments = @()
+                }
+            }
+        }
+
+        $preview = Get-ChaosStudyApprovalPreview -Plan (New-LivePlan) -ConfigurationName config
+
+        $preview.validationStatus | Should -Be 'RequiresAttention'
+        $preview.permissionFix.attempted | Should -BeTrue
+        $preview.permissionFix.applicable | Should -BeFalse
+        $preview.permissionFix.exact | Should -BeTrue
+        $preview.approvalReady | Should -BeFalse
+    }
+
+    It 'does not attempt permission repair when a repairable permission error is mixed with a system error' {
+        Mock Get-ChaosConfigurationValidation {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    errors = @([pscustomobject]@{
+                        errorCode = 'InternalError'
+                        errorMessage = 'Backend validation failed.'
+                    })
+                    validationErrors = [pscustomobject]@{
+                        permission = @([pscustomobject]@{
+                            resourceId = '/r/one'
+                            missingPermissions = @('read')
+                            recommendedRoles = @('/roles/reader')
+                        })
+                        resource = @()
+                    }
+                }
+            }
+        }
+        Mock Repair-ChaosConfigurationPermission { throw 'must not be called' }
+
+        $preview = Get-ChaosStudyApprovalPreview -Plan (New-LivePlan) -ConfigurationName config
+
+        $preview.validationErrors | Should -HaveCount 2
+        @($preview.validationErrors.category) | Should -Contain 'system'
+        @($preview.validationErrors.category) | Should -Contain 'permission'
+        $preview.permissionFix.attempted | Should -BeFalse
+        $preview.permissionFix.exact | Should -BeFalse
+        $preview.approvalReady | Should -BeFalse
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 0
+    }
+
+    It 'marks successful validation exact and ready without permission repair' {
+        Mock Get-ChaosConfigurationValidation {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'Succeeded'
+                    errors = @()
+                }
+            }
+        }
+        Mock Repair-ChaosConfigurationPermission { throw 'must not be called' }
+
+        $preview = Get-ChaosStudyApprovalPreview -Plan (New-LivePlan) -ConfigurationName config
+
+        $preview.validationStatus | Should -Be 'Succeeded'
+        $preview.permissionFix.attempted | Should -BeFalse
+        $preview.permissionFix.exact | Should -BeTrue
+        $preview.permissionFix.authoritative | Should -BeTrue
+        $preview.permissionFix.digest | Should -Not -BeNullOrEmpty
+        $preview.approvalReady | Should -BeTrue
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 0
+    }
+
+    It 'preserves non-permission validation failure in the armed validation path' {
+        Mock Get-ChaosConfigurationValidation {
+            [pscustomobject]@{
+                properties = [pscustomobject]@{
+                    status = 'RequiresAttention'
+                    errors = @([pscustomobject]@{
+                        errorCode = 'InternalError'
+                        errorMessage = 'Backend validation failed.'
+                    })
+                }
+            }
+        }
+        Mock Repair-ChaosConfigurationPermission { throw 'must not be called' }
+
+        $resolved = Resolve-ChaosConfigurationValidation -Plan (New-LivePlan) `
+            -ConfigurationName config -ApprovedPermissionDigest unused
+
+        $resolved.status | Should -Be 'RequiresAttention'
+        $resolved.permissionFix.attempted | Should -BeFalse
+        $resolved.permissionFix.applicable | Should -BeFalse
+        $resolved.permissionFix.validationBefore.errors[0].code | Should -Be 'InternalError'
+        $resolved.permissionFix.validationAfter.status | Should -Be 'RequiresAttention'
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 0
     }
 
     It 'ignores permission-operation timestamps while binding exact assignments' {
@@ -590,15 +772,109 @@ Describe 'Dry-run rendering contract' {
         $script:RenderedTables[0].data[0].Source | Should -Be 'metrics:VmAvailabilityMetric'
     }
 
-    It 'surfaces configuration deletion failures to the caller' {
-        Mock Invoke-AzChaos { throw 'configuration delete failed' }
+    It 'records effective cleanup when delete errors but the exact configuration is absent' {
+        $script:DeleteCalls = 0
+        Mock Invoke-AzChaos {
+            if ($ChaosArgs[2] -eq 'delete') {
+                $script:DeleteCalls++
+                throw 'BadRequest request-id=delete-request correlation-id=delete-correlation'
+            }
+            ConvertFrom-AzChaosJson -Text '[]'
+        }
         $plan = [pscustomobject]@{
-            workspace = [pscustomobject]@{ subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws' }
+            workspace = [pscustomobject]@{
+                id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
             scenario = [pscustomobject]@{ name = 'scenario' }
         }
 
-        { Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config } |
-            Should -Throw '*configuration delete failed*'
+        $cleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config
+
+        $cleanup.effective | Should -BeTrue
+        $cleanup.certainty | Should -Be 'effective-with-service-error'
+        $cleanup.serviceError | Should -Match 'delete-request'
+        $cleanup.reconciliation.state | Should -Be 'absent'
+        $cleanup.resourceId | Should -Be '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/scenarios/scenario/configurations/config'
+        (Format-ChaosCleanupStatus -Cleanup $cleanup) |
+            Should -Match '(?i)effective despite a service/LRO error'
+        $script:DeleteCalls | Should -Be 1
+        Should -Invoke Invoke-AzChaos -Times 1 -ParameterFilter { $ChaosArgs[2] -eq 'delete' }
+        Should -Invoke Invoke-AzChaos -Times 1 -ParameterFilter { $ChaosArgs[2] -eq 'list' }
+    }
+
+    It 'preserves an empty CLI JSON list as a conclusive empty collection' {
+        $parsed = ConvertFrom-AzChaosJson -Text '[]'
+
+        $null -eq $parsed | Should -BeFalse
+        @($parsed) | Should -HaveCount 0
+    }
+
+    It 'keeps cleanup uncertain when the exact configuration remains present' {
+        Mock Invoke-AzChaos {
+            if ($ChaosArgs[2] -eq 'delete') { throw 'delete LRO error' }
+            [pscustomobject]@{
+                value = @([pscustomobject]@{
+                    name = 'config'
+                    id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws/scenarios/scenario/configurations/config'
+                })
+            }
+        }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{
+                id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
+            scenario = [pscustomobject]@{ name = 'scenario' }
+        }
+
+        $cleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config
+
+        $cleanup.effective | Should -BeFalse
+        $cleanup.certainty | Should -Be 'cleanup-uncertain'
+        $cleanup.reconciliation.state | Should -Be 'present'
+        $cleanup.reconciliation.resourceId | Should -Be $cleanup.resourceId
+        (Format-ChaosCleanupStatus -Cleanup $cleanup) | Should -Match '(?i)Cleanup is uncertain'
+    }
+
+    It 'keeps cleanup uncertain when read-only reconciliation is inconclusive' {
+        Mock Invoke-AzChaos {
+            if ($ChaosArgs[2] -eq 'delete') { throw 'delete LRO error' }
+            return $null
+        }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{
+                id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
+            scenario = [pscustomobject]@{ name = 'scenario' }
+        }
+
+        $cleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config
+
+        $cleanup.effective | Should -BeFalse
+        $cleanup.certainty | Should -Be 'cleanup-uncertain'
+        $cleanup.reconciliation.state | Should -Be 'inconclusive'
+        $cleanup.resourceId | Should -Match '/configurations/config$'
+    }
+
+    It 'preserves successful cleanup without reconciliation' {
+        Mock Invoke-AzChaos { return $null }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{
+                id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
+            scenario = [pscustomobject]@{ name = 'scenario' }
+        }
+
+        $cleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config
+
+        $cleanup.effective | Should -BeTrue
+        $cleanup.certainty | Should -Be 'delete-reported-success'
+        $cleanup.serviceError | Should -BeNullOrEmpty
+        $cleanup.reconciliation | Should -BeNullOrEmpty
+        Should -Invoke Invoke-AzChaos -Times 1
     }
 }
 

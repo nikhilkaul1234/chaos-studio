@@ -143,7 +143,7 @@ approval preview and can never arm.
 
     $approvalConfigurationName = "$configurationName-approval"
     $configurationCreated = $false
-    $approvalCleanupFailure = $null
+    $approvalCleanup = $null
     try {
         Write-ChaosStudyNote -Message "Creating temporary scenario configuration $approvalConfigurationName for approval preparation."
         New-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName | Out-Null
@@ -170,44 +170,69 @@ approval preview and can never arm.
             permissionFix          = $prepared.permissionFix
         }
         Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
-        $previewCommand = if ($prepared.permissionFix.applicable) {
+        $previewCommand = if ($prepared.permissionFix.attempted) {
             'az chaos scenario config fix-permissions --what-if'
         } else {
             'az chaos scenario config validate'
         }
+        $previewNote = if ($prepared.permissionFix.attempted) {
+            "RBAC preview digest $($prepared.permissionFix.digest)"
+        } else {
+            "Validation $($prepared.validationStatus); permission repair not attempted"
+        }
         Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'approval' -Command $previewCommand `
-            -Arguments @($approvalConfigurationName) -ExitCode 0 -Note "RBAC preview $($prepared.permissionFix.digest)" | Out-Null
+            -Arguments @($approvalConfigurationName) -ExitCode 0 -Note $previewNote | Out-Null
     } finally {
         if ($configurationCreated) {
             try {
-                Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName | Out-Null
+                $approvalCleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName
             } catch {
-                $approvalCleanupFailure = [ordered]@{
+                $approvalCleanup = [ordered]@{
                     configurationName = $approvalConfigurationName
+                    resourceId        = "$($plan.workspace.id)/scenarios/$($plan.scenario.name)/configurations/$approvalConfigurationName"
                     attemptedAt       = Get-ChaosUtcNow
                     deletionRequested = $true
-                    failure           = Protect-ChaosSecret -Text $_.Exception.Message
+                    effective         = $false
+                    certainty         = 'cleanup-uncertain'
+                    serviceError      = Protect-ChaosSecret -Text $_.Exception.Message
+                    reconciliation    = $null
                 }
-                Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/cleanup/approval-configuration.json' `
-                    -Content $approvalCleanupFailure | Out-Null
             }
         }
     }
-    if ($null -ne $approvalCleanupFailure) {
-        Write-ChaosStudyFailure -Title 'Temporary approval configuration cleanup failed' -Message @"
-Deletion of '$approvalConfigurationName' failed. The failure is retained at
+    $approvalPreview['cleanup'] = $approvalCleanup
+    Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
+    if ($null -ne $approvalCleanup -and ($null -ne $approvalCleanup.serviceError -or -not $approvalCleanup.effective)) {
+        Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/cleanup/approval-configuration.json' `
+            -Content $approvalCleanup | Out-Null
+    }
+    if ($null -eq $approvalCleanup -or -not $approvalCleanup.effective) {
+        $cleanupStatus = Format-ChaosCleanupStatus -Cleanup $approvalCleanup
+        Write-ChaosStudyFailure -Title 'Temporary approval configuration cleanup uncertain' -Message @"
+Deletion of '$approvalConfigurationName' was not confirmed. The exact resource
+identity and reconciliation evidence are retained at
 evidence/cleanup/approval-configuration.json. Approval cannot proceed while the
 temporary configuration may still exist.
-"@ -Remediation 'Delete the named configuration, verify it is gone, then run -PrepareApproval again.'
+
+$cleanupStatus
+
+Validation status: $($approvalPreview.validation.status)
+Permission repair attempted: $($approvalPreview.permissionFix.attempted)
+"@ -Remediation 'Verify the exact configuration resource is absent, then run -PrepareApproval again.'
         exit (Get-ChaosStudyExitCode -Name 'Error')
     }
+    if ($null -ne $approvalCleanup.serviceError) {
+        Write-ChaosStudyCard -Title 'Cleanup effective despite service error' -Body @"
+The delete command reported a service/LRO error, retained at
+evidence/cleanup/approval-configuration.json. One read-only reconciliation found
+the exact configuration absent, so cleanup is effective. No second DELETE was
+issued.
 
-    $permissionText = if (-not $approvalPreview.permissionFix.applicable) {
-        'No RBAC changes are required: the temporary configuration validated successfully.'
-    } else {
-        "Applying these assignments requires Microsoft.Authorization/roleAssignments/write on every listed scope.`n`n" +
-            (ConvertTo-ChaosCanonicalJson -InputObject $approvalPreview.permissionFix.details)
+$(Format-ChaosCleanupStatus -Cleanup $approvalCleanup)
+"@
     }
+
+    $permissionText = Format-ChaosApprovalPermissionStatus -ApprovalPreview $prepared
     Write-ChaosStudyCard -Title 'Frozen plan requiring human approval' -Body (
         ConvertTo-ChaosCanonicalJson -InputObject $plan
     )
@@ -217,11 +242,20 @@ temporary configuration may still exist.
     Write-ChaosStudyCard -Title 'Exact RBAC changes requiring human approval' -Body $permissionText
 
     if (-not $approvalPreview.approvalReady) {
+        $approvalFailure = if (-not $approvalPreview.permissionFix.attempted) {
+            'Validation failed with backend, resource-state, metadata, unknown, or otherwise non-repairable errors. Permission repair was not attempted.'
+        } elseif (-not $approvalPreview.permissionFix.exact) {
+            'Permission what-if did not return an authoritative complete assignment set.'
+        } else {
+            'Permission what-if returned no applicable assignments, and validation did not succeed.'
+        }
         Write-ChaosStudyFailure -Title 'Configuration is not ready for approval' -Message @"
-Validation reported '$($approvalPreview.validation.status)', and Chaos Studio
-did not return a complete, exact list of applicable RBAC changes. The validation
-errors and permission preview are stored in approval-preview.v1.json. No role
-assignment or scenario run was created.
+Validation reported '$($approvalPreview.validation.status)'.
+
+$approvalFailure
+
+The validation errors, permission decision, and cleanup result are stored in
+approval-preview.v1.json. No role assignment or scenario run was created.
 "@ -Remediation 'Correct the validation errors, re-scope if needed, and prepare approval again.'
         exit (Get-ChaosStudyExitCode -Name 'ValidationFailed')
     }
@@ -354,7 +388,7 @@ try {
     $validationStatus = $validated.status
     $permissionFix = $validated.permissionFix
 
-    if ($null -ne $permissionFix) {
+    if ($null -ne $permissionFix -and $permissionFix.attempted) {
         Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'run' -Command 'az chaos scenario config fix-permissions' `
             -Arguments @($configurationName, "applicable=$($permissionFix.applicable)") -ExitCode 0 | Out-Null
     }
@@ -437,11 +471,18 @@ try {
                 configurationName = $configurationName
                 attemptedAt       = Get-ChaosUtcNow
                 deletionRequested = $true
-                failure           = Protect-ChaosSecret -Text $_.Exception.Message
+                effective         = $false
+                certainty         = 'cleanup-uncertain'
+                serviceError      = Protect-ChaosSecret -Text $_.Exception.Message
+                reconciliation    = $null
             }
+        }
+        if ($null -ne $configurationCleanup -and ($null -ne $configurationCleanup.serviceError -or -not $configurationCleanup.effective)) {
             Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/cleanup/run-configuration.json' `
                 -Content $configurationCleanup | Out-Null
-            if (-not $failureMessage) { $failureMessage = "Scenario configuration cleanup failed: $($configurationCleanup.failure)" }
+        }
+        if ($null -eq $configurationCleanup -or -not $configurationCleanup.effective) {
+            if (-not $failureMessage) { $failureMessage = 'Scenario configuration cleanup is uncertain; see evidence/cleanup/run-configuration.json.' }
             $outcome = 'Failed'
         }
     }
@@ -495,7 +536,7 @@ $runRecord = [ordered]@{
         validationStatus = $validationStatus
         permissionFix    = $permissionFix
         cleanup          = $configurationCleanup
-        retained         = ($null -ne $configurationCleanup -and $null -ne $configurationCleanup.failure)
+        retained         = ($null -eq $configurationCleanup -or -not $configurationCleanup.effective)
     }
     scenarioRun   = [ordered]@{
         runId       = $runId
@@ -522,8 +563,10 @@ Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'run-record.v1.json'
 
 $status = if ($failureMessage) { 'error' } elseif ($coverage.missing -gt 0) { 'warning' } else { 'success' }
 $touched = if ($null -ne $runObservation -and $null -ne $runObservation.resourcesTouched) { $runObservation.resourcesTouched } else { 'not reported' }
-$completionBody = if ($null -ne $configurationCleanup -and $null -ne $configurationCleanup.failure) {
-    'The scenario run has stopped, but configuration cleanup failed. The failure is retained in evidence/cleanup/run-configuration.json. Evidence is recorded; it has not yet been interpreted.'
+$completionBody = if ($null -eq $configurationCleanup -or -not $configurationCleanup.effective) {
+    'The scenario run has stopped, but configuration cleanup is uncertain. The exact resource identity, original service error, and reconciliation result are retained in evidence/cleanup/run-configuration.json. Evidence is recorded; it has not yet been interpreted.'
+} elseif ($null -ne $configurationCleanup.serviceError) {
+    'The scenario run has stopped. The delete command reported a service/LRO error, but one read-only reconciliation found the exact configuration absent. Cleanup is effective and the original error is retained in evidence/cleanup/run-configuration.json.'
 } else {
     'The scenario run has stopped and the temporary configuration has been cleaned up. Evidence is recorded; it has not yet been interpreted.'
 }

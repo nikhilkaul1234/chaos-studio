@@ -79,6 +79,16 @@ function Initialize-ChaosExtension {
     $script:ChaosExtensionEnsured = $true
 }
 
+function ConvertFrom-AzChaosJson {
+    <#
+    .SYNOPSIS
+        Parse CLI JSON without collapsing an empty array into no output.
+    #>
+    param([Parameter(Mandatory)][string]$Text)
+
+    return ,($Text | ConvertFrom-Json -NoEnumerate)
+}
+
 function Invoke-AzChaos {
     [CmdletBinding()]
     param(
@@ -149,7 +159,7 @@ function Invoke-AzChaos {
 
         if (-not $stdoutText) { return $null }
         try {
-            return $stdoutText | ConvertFrom-Json
+            return (ConvertFrom-AzChaosJson -Text $stdoutText)
         } catch {
             return $stdoutText
         }
