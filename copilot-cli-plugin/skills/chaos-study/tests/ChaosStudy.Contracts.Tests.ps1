@@ -878,6 +878,106 @@ Describe 'Dry-run rendering contract' {
     }
 }
 
+Describe 'Invoke-AzChaos output boundary' {
+    BeforeEach {
+        $script:PreviousExtensionState = $script:ChaosExtensionEnsured
+        $script:ChaosExtensionEnsured = $true
+    }
+
+    AfterEach {
+        Remove-Item -Path Function:\global:az -ErrorAction SilentlyContinue
+        $script:ChaosExtensionEnsured = $script:PreviousExtensionState
+    }
+
+    It 'preserves CLI JSON empty arrays through the public wrapper' {
+        function global:az {
+            $global:LASTEXITCODE = 0
+            '[]'
+        }
+
+        $result = Invoke-AzChaos -ChaosArgs @('scenario', 'config', 'list')
+
+        $null -eq $result | Should -BeFalse
+        $result.GetType().FullName | Should -Be 'System.Object[]'
+        @($result) | Should -HaveCount 0
+    }
+
+    It 'streams non-empty arrays through production-equivalent run filtering and sorting' {
+        function global:az {
+            $global:LASTEXITCODE = 0
+            @'
+[
+  {"name":"older-match","properties":{"scenarioConfigurationName":"expected-config","startTime":"2026-08-31T10:00:00Z"}},
+  {"name":"other-config","properties":{"scenarioConfigurationName":"other","startTime":"2026-08-31T12:00:00Z"}},
+  {"name":"expected-match","properties":{"scenarioConfigurationName":"expected-config","startTime":"2026-08-31T11:00:00Z"}}
+]
+'@
+        }
+        $configName = 'expected-config'
+
+        $runs = @(Invoke-AzChaos -ChaosArgs @('scenario', 'run', 'list') |
+            Where-Object { $_.properties.scenarioConfigurationName -eq $configName } |
+            Sort-Object { $_.properties.startTime } -Descending)
+
+        $runs | Should -HaveCount 2
+        $runs[0] | Should -BeOfType ([pscustomobject])
+        $runs[0].name | Should -Be 'expected-match'
+        $runs[0].name | Should -BeOfType ([string])
+    }
+
+    It 'maps a real empty-list wrapper response to authoritative cleanup absence' {
+        $script:NativeDeleteCalls = 0
+        function global:az {
+            if ($args -contains 'delete') {
+                $script:NativeDeleteCalls++
+                $global:LASTEXITCODE = 1
+                'BadRequest: delete LRO response error'
+                return
+            }
+            $global:LASTEXITCODE = 0
+            '[]'
+        }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{
+                id = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
+                subscriptionId = 'sub'; resourceGroup = 'rg'; name = 'ws'
+            }
+            scenario = [pscustomobject]@{ name = 'scenario' }
+        }
+
+        $cleanup = Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName config
+
+        $cleanup.effective | Should -BeTrue
+        $cleanup.certainty | Should -Be 'effective-with-service-error'
+        $cleanup.reconciliation.state | Should -Be 'absent'
+        $script:NativeDeleteCalls | Should -Be 1
+    }
+
+    It 'keeps object scalar malformed and empty-output handling explicit' {
+        $script:AzPayload = '{"name":"object"}'
+        function global:az {
+            $global:LASTEXITCODE = 0
+            $script:AzPayload
+        }
+
+        $object = Invoke-AzChaos -ChaosArgs @('workspace', 'show')
+        $object | Should -BeOfType ([pscustomobject])
+        $object.name | Should -Be 'object'
+
+        $script:AzPayload = '42'
+        $scalar = Invoke-AzChaos -ChaosArgs @('workspace', 'show')
+        $scalar | Should -Be 42
+
+        $script:AzPayload = 'not-json'
+        $malformed = Invoke-AzChaos -ChaosArgs @('workspace', 'show')
+        $malformed | Should -Be 'not-json'
+
+        $script:AzPayload = ''
+        $empty = Invoke-AzChaos -ChaosArgs @('workspace', 'show')
+        $empty | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Front-door forwarding and exit contracts' {
     BeforeAll {
         . $script:FrontDoor -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws `
