@@ -32,6 +32,7 @@ BeforeAll {
     . $script:Execute
     . $script:Findings
     . $script:Report
+    . $script:HistoryEntry
 
     function New-LivePlan {
         return [pscustomobject]@{
@@ -273,6 +274,21 @@ Describe 'Plan persistence and execution gates' {
 
         $first.digest | Should -Be $second.digest
     }
+
+    It 'pins both permission-repair calls to the frozen plan subscription' {
+        Mock Invoke-AzChaos { [pscustomobject]@{ properties = [pscustomobject]@{} } }
+        $plan = [pscustomobject]@{
+            workspace = [pscustomobject]@{ subscriptionId = 'frozen-sub'; resourceGroup = 'rg'; name = 'ws' }
+            scenario = [pscustomobject]@{ name = 'zone-down' }
+        }
+
+        Repair-ChaosConfigurationPermission -Plan $plan -ConfigurationName config -WhatIf | Out-Null
+
+        Should -Invoke Invoke-AzChaos -Times 2 -ParameterFilter {
+            $subscriptionIndex = [array]::IndexOf([object[]]$ChaosArgs, '--subscription')
+            $subscriptionIndex -ge 0 -and $ChaosArgs[$subscriptionIndex + 1] -eq 'frozen-sub'
+        }
+    }
 }
 
 Describe 'Automatic abort behavior' {
@@ -428,6 +444,29 @@ Describe 'Cross-file artifact and replay contracts' {
 
         foreach ($parameter in @('Parameters', 'FilterLocation', 'FilterZone', 'FilterPhysicalZone', 'ExcludeResource', 'ExcludeType', 'ExcludeTag')) {
             $source | Should -Match "-$parameter"
+        }
+    }
+
+    It 'renders one and multiple tag exclusions as bindable hashtables' {
+        $cases = @(
+            @([pscustomobject]@{ key = 'environment'; value = 'production' })
+            @(
+                [pscustomobject]@{ key = 'environment'; value = 'production' }
+                [pscustomobject]@{ key = 'protected'; value = '*' }
+            )
+        )
+        $binder = [scriptblock]::Create('param([hashtable]$ExcludeTag) $ExcludeTag')
+
+        foreach ($pairs in $cases) {
+            $table = ConvertTo-ChaosTagTable -Tags @($pairs)
+            $literal = ConvertTo-ChaosPowerShellLiteral -Value $table
+            $bound = & $binder (Invoke-Expression $literal)
+
+            $bound | Should -BeOfType ([hashtable])
+            $bound.Count | Should -Be @($pairs).Count
+            foreach ($pair in @($pairs)) {
+                $bound[[string]$pair.key] | Should -Be $pair.value
+            }
         }
     }
 
