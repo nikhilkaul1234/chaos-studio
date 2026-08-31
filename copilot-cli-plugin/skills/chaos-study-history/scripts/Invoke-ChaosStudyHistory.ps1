@@ -70,6 +70,42 @@ function Resolve-Entry {
     }
 }
 
+function ConvertTo-ChaosPowerShellLiteral {
+    <#
+    .SYNOPSIS
+        Render a frozen value as a safe PowerShell literal for rerun output.
+    #>
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) { return '$null' }
+    if ($Value -is [string]) { return "'" + $Value.Replace("'", "''") + "'" }
+    if ($Value -is [bool]) { return $(if ($Value) { '$true' } else { '$false' }) }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $pairs = @(
+            foreach ($key in @($Value.Keys | Sort-Object)) {
+                "$(ConvertTo-ChaosPowerShellLiteral -Value ([string]$key)) = $(ConvertTo-ChaosPowerShellLiteral -Value $Value[$key])"
+            }
+        )
+        return '@{' + ($pairs -join '; ') + '}'
+    }
+    if ($Value -is [pscustomobject]) {
+        $pairs = @(
+            foreach ($property in @($Value.PSObject.Properties | Sort-Object -Property Name)) {
+                "$(ConvertTo-ChaosPowerShellLiteral -Value $property.Name) = $(ConvertTo-ChaosPowerShellLiteral -Value $property.Value)"
+            }
+        )
+        return '@{' + ($pairs -join '; ') + '}'
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        $items = @($Value | ForEach-Object { ConvertTo-ChaosPowerShellLiteral -Value $_ })
+        return '@(' + ($items -join ', ') + ')'
+    }
+    if ($Value -is [System.IFormattable]) {
+        return $Value.ToString($null, [System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    return ConvertTo-ChaosPowerShellLiteral -Value ([string]$Value)
+}
+
 if ($index.Count -eq 0) {
     Write-Card -Title 'No studies yet' -Status 'info' -Body @"
 No studies were found under the study root. History becomes useful after the
@@ -224,20 +260,57 @@ $($baseline.studyId) ($($comparison.baseline.verdict))
         # command deliberately omits -CreateWorkspace: reruns observe, they do not
         # provision. The scope is re-discovered live, so a resource that has since
         # left the workspace is not silently carried forward from the old plan.
-        $regionLine = if ($plan.scope.region) { "`n    -Location '$($plan.scope.region)' ``" } else { '' }
+        $regionLine = if ($plan.scope.region) { "`n    -Location $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.scope.region)) ``" } else { '' }
         # -Action accepts a URN or a name. Prefer the URN because it is exact, but
         # a discovery-skipped plan never learned one, and emitting -Action '' would
         # hand the operator a command that cannot run.
         $actionRef = if ([string]::IsNullOrWhiteSpace($plan.action.canonicalId)) { [string]$plan.action.name } else { [string]$plan.action.canonicalId }
-        $sourceLines = @($plan.signals.configuredSources | Where-Object { $_ } | ForEach-Object { "    -SignalSource '$_' ``" })
+        $sourceLines = @($plan.signals.configuredSources | Where-Object { $_ } | ForEach-Object {
+                "    -SignalSource $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$_)) ``"
+            })
+        $parameterTable = [ordered]@{}
+        foreach ($pair in @($plan.scenario.parameters)) {
+            if ($null -ne $pair -and -not [string]::IsNullOrWhiteSpace([string]$pair.key)) {
+                $parameterTable[[string]$pair.key] = $pair.value
+            }
+        }
+        $replayLines = @()
+        if ($parameterTable.Count -gt 0) {
+            $replayLines += "    -Parameters $(ConvertTo-ChaosPowerShellLiteral -Value $parameterTable) ``"
+        }
+        $filters = $plan.scope.blastRadius.filters
+        if ($null -ne $filters) {
+            if ($filters.PSObject.Properties.Name -contains 'locations' -and @($filters.locations).Count -gt 0) {
+                $replayLines += "    -FilterLocation $(ConvertTo-ChaosPowerShellLiteral -Value @($filters.locations)) ``"
+            }
+            if ($filters.PSObject.Properties.Name -contains 'zones' -and @($filters.zones).Count -gt 0) {
+                $replayLines += "    -FilterZone $(ConvertTo-ChaosPowerShellLiteral -Value @($filters.zones)) ``"
+            }
+            if ($filters.PSObject.Properties.Name -contains 'physicalZones' -and @($filters.physicalZones).Count -gt 0) {
+                $replayLines += "    -FilterPhysicalZone $(ConvertTo-ChaosPowerShellLiteral -Value ([string](@($filters.physicalZones)[0]))) ``"
+            }
+        }
+        $exclusions = $plan.scope.blastRadius.exclusions
+        if ($null -ne $exclusions) {
+            if ($exclusions.PSObject.Properties.Name -contains 'resources' -and @($exclusions.resources).Count -gt 0) {
+                $replayLines += "    -ExcludeResource $(ConvertTo-ChaosPowerShellLiteral -Value @($exclusions.resources)) ``"
+            }
+            if ($exclusions.PSObject.Properties.Name -contains 'types' -and @($exclusions.types).Count -gt 0) {
+                $replayLines += "    -ExcludeType $(ConvertTo-ChaosPowerShellLiteral -Value @($exclusions.types)) ``"
+            }
+            if ($exclusions.PSObject.Properties.Name -contains 'tags' -and $null -ne $exclusions.tags) {
+                $replayLines += "    -ExcludeTag $(ConvertTo-ChaosPowerShellLiteral -Value $exclusions.tags) ``"
+            }
+        }
         $command = @(
-            "& '$scope' ``"
-            "    -SubscriptionId '$($plan.workspace.subscriptionId)' ``"
-            "    -ResourceGroup '$($plan.workspace.resourceGroup)' ``"
-            "    -WorkspaceName '$($plan.workspace.name)' ``$regionLine"
-            "    -Scenario '$($plan.scenario.name)' ``"
-            "    -Action '$actionRef' ``"
-            "    -SteadyState '$($plan.question.steadyState.raw)' ``"
+            "& $(ConvertTo-ChaosPowerShellLiteral -Value $scope) ``"
+            "    -SubscriptionId $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.workspace.subscriptionId)) ``"
+            "    -ResourceGroup $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.workspace.resourceGroup)) ``"
+            "    -WorkspaceName $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.workspace.name)) ``$regionLine"
+            "    -Scenario $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.scenario.name)) ``"
+            "    -Action $(ConvertTo-ChaosPowerShellLiteral -Value $actionRef) ``"
+            "    -SteadyState $(ConvertTo-ChaosPowerShellLiteral -Value ([string]$plan.question.steadyState.raw)) ``"
+            $replayLines
             $sourceLines
             "    -DurationMinutes $($plan.windows.injectMinutes) ``"
             "    -BaselineMinutes $($plan.windows.baselineMinutes) ``"

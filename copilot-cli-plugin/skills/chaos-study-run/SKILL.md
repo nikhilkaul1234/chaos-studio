@@ -1,13 +1,14 @@
 ---
 name: chaos-study-run
-description: "Execute a frozen Chaos study plan against Azure using Chaos Studio V2: verify plan integrity, create and validate a scenario configuration, require an explicit typed consent phrase, collect baseline evidence, execute the scenario run, collect during and post-recovery evidence, and always clean up the configuration. Dry-run by default."
+description: "Prepare and execute a frozen Chaos study plan against Azure using Chaos Studio V2: verify integrity and live discovery, display the exact frozen blast radius and RBAC what-if changes, require fresh human plan-bound consent, evaluate automatic abort conditions against live evidence, collect baseline/during/recovery evidence, and always clean up. Dry-run by default."
 ---
 
-# chaos-study-run — the only phase that changes production
+# chaos-study-run — approval preparation and bounded execution
 
-Everything before this is analysis. This skill executes a real Chaos Studio
-scenario against real Azure resources, so it is deliberately the most
-conservative script in the suite.
+Scoping is read-only unless `-CreateWorkspace` was explicitly requested.
+This skill can create and delete a temporary configuration while preparing
+approval; only its armed path can grant the previewed RBAC changes or execute a
+real Chaos Studio scenario.
 
 ## Principles
 
@@ -15,24 +16,34 @@ conservative script in the suite.
 entire sequence — plan verification, the configuration it would create, the
 consent phrase — and executes nothing. Read it before arming anything.
 
-**Consent is typed, not flagged.** Arming requires `-DryRun:$false` **and**
-`-Consent` matching the phrase the plan prints, exactly. A wrong phrase exits
-`11`. There is no `-Yes`, no `-Force` that bypasses it, and no environment
-variable that pre-approves it.
+**Consent is fresh and human-originated.** `-PrepareApproval` displays the exact
+frozen blast radius and exact redacted RBAC what-if response, then deletes its
+temporary configuration. The agent must stop. A human must type the printed
+plan-hash-bound phrase in a new invocation with `-DryRun:$false`. A wrong,
+pre-preview, reused, or agent-supplied phrase is not approval and exits `11`.
 
 **The plan is verified, not trusted.** The plan hash is recomputed before
 execution. Any drift since scoping exits `12`. If the blast radius changed after
 you approved it, this refuses rather than running something you did not review.
 
-**Validation is a gate, not advice.** The scenario configuration is created and
-validated *before* any evidence is collected or anything is injected, and the run
-is refused unless the service reports `Succeeded`. If validation fails, the
-missing role assignments are previewed with `--what-if`, shown, applied when the
-service names any, and validation is repeated. Repair is not a switch: this path
-is already past typed consent, so the operator has approved acting on this scope,
-and an opt-in flag for the permissions that approval requires would only add a
-way to fail. What matters is that the change is visible and recorded, which it
-is.
+**Validation is a gate, not advice.** Approval preparation validates a temporary
+configuration and freezes the service's exact permission preview. The armed run
+recreates and revalidates it. If that preview changed, nothing is granted or
+started and fresh approval is required. Only the exact approved preview may be
+applied before validation is repeated. Each preview entry identifies the target
+resource, principal, role definition, and assignment scope. Applying it requires
+the caller to hold `Microsoft.Authorization/roleAssignments/write` on those
+scopes (normally Owner or User Access Administrator).
+
+**Offline plans never arm.** `-SkipDiscovery` plans remain useful planning
+artifacts, but `-PrepareApproval`, `-Force`, and `-Consent` cannot make one
+executable. Scope again with live discovery first.
+
+**Abort is live, not cleanup.** During injection the frozen predicate and
+telemetry-availability conditions are evaluated against live signal queries. A
+trip calls the supported scenario-run cancel operation immediately and persists
+the checks, reason, timestamp, and cancellation response. Missing telemetry
+cannot become a successful recovery verdict.
 
 **Evidence is collected around the run, not just during it.** Baseline, during,
 and post windows are all collected. Without baseline there is no "normal" to
@@ -58,31 +69,39 @@ by scoping a new one, so history stays comparable.
 ./scripts/Invoke-ChaosStudyRun.ps1 -StudyId latest
 ```
 
-**Arm it**, using the phrase the preview printed:
+**Prepare approval** (temporary configuration only; no grants or scenario run):
 
 ```powershell
-./scripts/Invoke-ChaosStudyRun.ps1 -StudyId latest -DryRun:$false `
-    -Consent '<phrase from the preview>'
+./scripts/Invoke-ChaosStudyRun.ps1 -StudyId <studyId> -PrepareApproval
+```
+
+**Stop for a human**, then arm with the phrase that human types after reviewing
+the exact previews:
+
+```powershell
+./scripts/Invoke-ChaosStudyRun.ps1 -StudyId <studyId> -DryRun:$false `
+    -Consent '<human-typed phrase>'
 ```
 
 Switches worth knowing:
 
 - `-SignalSource` — add evidence sources beyond the plan's (`metrics:` / `logs:`)
 - `-PollSeconds` — scenario run status poll interval
+- `-PrepareApproval` — freeze the exact blast-radius/RBAC preview required before consent
 - `-KeepConfiguration` — leave the configuration for inspection
 
 ## What actually happens
 
-1. Load the plan and re-verify its hash
-2. Render the consent phrase and require it back verbatim
-3. Create the scenario configuration on the workspace, carrying the plan's
+1. Load the plan, re-verify its hash, and refuse offline/unverified plans
+2. Require an unconsumed approval preview for this exact plan and fresh human consent
+3. Recreate the scenario configuration on the workspace, carrying the plan's
    frozen parameters, filters and exclusions
-4. Validate it; on failure, preview the missing grants with `--what-if`, apply
-   them if the service names any, and validate again
+4. Validate it; compare the exact missing-grant preview with the approved one,
+   apply only an exact match, and validate again
 5. Refuse to continue unless validation now says `Succeeded`
 6. Collect the **baseline** window
-7. Execute the configuration; poll the scenario run until it reaches a terminal
-   state or the injection window closes
+7. Execute the configuration; poll the scenario run and live signals until it
+   reaches a terminal state, an abort condition trips, or the window closes
 8. Collect the **during** window while the run is live
 9. Wait out recovery, then collect the **post** window
 10. Cancel any in-flight run and delete the configuration (always), then write
@@ -94,6 +113,14 @@ has already elapsed wastes the window and the study. `Start-ChaosStudyScenarioRu
 takes the validation result as a required argument and asserts it again as the
 last thing before `run start`, so the guarantee belongs to the function that
 starts the run rather than to the order of statements in one caller.
+
+## Portable shell-agent contract
+
+The host must run PowerShell 7.4+ and Azure CLI 2.75+, preserve
+`CHAOS_STUDY_ROOT` and the study id across invocations, display all preview and
+failure output, propagate exit codes, and stop after `-PrepareApproval`. Copilot
+CLI is one packaging host, not a runtime dependency. SRE Agent is an intended
+integrated target but has not yet been validated for this PR.
 
 The configuration is built from what the plan captured live at scope time: the
 scenario, its parameters as the `{key,value}` pairs the service takes, and the

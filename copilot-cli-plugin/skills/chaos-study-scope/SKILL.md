@@ -11,6 +11,12 @@ question that could not have come back false.
 
 This skill's job is to catch that before production is touched.
 
+The method is portable to any shell-capable agent that can run PowerShell and
+Azure CLI, preserve the returned study id and durable study store, propagate
+exit codes, and hand approval to a human. Copilot CLI packaging is not part of
+the execution contract. SRE Agent consumption is intended but not yet validated
+by this PR.
+
 ## Principles
 
 **The workspace is the lifecycle root.** Scopes, discovered resources,
@@ -24,10 +30,11 @@ every scope. That response is authoritative: its `canonicalId`, `actionType`,
 from the workspace's own recommendation list.
 
 **No bundled catalogue, no fallback.** This skill ships no action definitions.
-If the actions endpoint cannot be reached — not logged in, no permission, region
-unresolved — scoping stops with exit `16` and says so. It does not degrade to a
-stale local list, because a stale list is how you plan a study against an action
-that does not exist.
+When live discovery is requested and the actions endpoint cannot be reached —
+not logged in, no permission, region unresolved — scoping stops with exit `16`
+and says so. It does not degrade that attempted live plan to a stale local list.
+`-SkipDiscovery` is a separate, explicit offline planning mode whose output is
+marked unverified and cannot arm.
 
 **What is in scope is read, not asserted.** The resources a run will touch come
 from the workspace's discovered resources, not from the operator's mental model.
@@ -92,12 +99,13 @@ Useful switches:
 - `-FilterLocation` / `-FilterZone` / `-ExcludeResource` / `-ExcludeType` /
   `-ExcludeTag` — the blast radius, frozen onto the plan as the configuration's
   `filters` and `exclusions`
-- `-SignalSource` — the evidence to collect (`metrics:` / `logs:`); no defaults
-  are invented for you
+- `-SignalSource` — required evidence for both the verdict and live abort
+  evaluation (`metrics:` / `logs:`); no defaults are invented for you
 - `-Hypothesis` — what you expect to happen, recorded for honesty at report time
 - `-SkipDiscovery` — plan without contacting Azure. The plan then carries
   limitation `L10` and records the scenario and action as `unverified-offline`;
-  no metadata is fabricated, and the run still validates before executing.
+  no metadata is fabricated. This plan cannot prepare approval or arm. Re-scope
+  without the switch to create a fresh live-discovered plan before execution.
 
 Output is a frozen `study-plan.v1.json` plus a study id. Nothing is executed.
 
@@ -150,8 +158,11 @@ What lives locally is the method:
 
 ## Next
 
-Review the plan, then run it with explicit consent:
+Review the plan, then prepare the exact blast-radius and RBAC preview:
 
 ```powershell
-chaos-study-run -StudyId <studyId> -DryRun:$false -Consent '<phrase from the plan>'
+chaos-study-run -StudyId <studyId> -PrepareApproval
 ```
+
+After the preview, the agent stops and a human types the printed phrase in a new
+armed invocation.

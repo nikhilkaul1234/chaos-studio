@@ -88,8 +88,8 @@ param(
     [Parameter(ParameterSetName = 'Plan', Mandatory)][string]$SteadyState,
 
     [ValidateRange(1, 240)][int]$DurationMinutes = 10,
-    [ValidateRange(0, 240)][int]$BaselineMinutes = 5,
-    [ValidateRange(0, 240)][int]$RecoveryMinutes = 10,
+    [ValidateRange(1, 240)][int]$BaselineMinutes = 5,
+    [ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
 
     # Scenario parameters, keyed by the names in the scenario's live parameter
     # list. Frozen onto the plan as the {key,value} pairs the service takes.
@@ -110,6 +110,7 @@ param(
     [hashtable]$ExcludeTag,
 
     [string]$StudyRoot,
+    [string]$StudyId,
 
     # Plan without probing Azure. The plan carries limitation L10 and is not
     # evidence that the study can run.
@@ -126,7 +127,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib' 'Workspace.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Readiness.ps1')
 
-$ChaosStudyPlanVersion = 'study-plan.v2'
+$ChaosStudyPlanVersion = 'study-plan.v1'
 
 # -- Steady state ----------------------------------------------------------
 
@@ -215,10 +216,10 @@ else {
     $workspace = $resolved.workspace
     $workspaceCreated = [bool]$resolved.created
 
-    $scopedResources = ConvertTo-ChaosList (Get-ChaosStudyScopedResource -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName)
-    $evaluation = Assert-ChaosWorkspaceEvaluation -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName
+    $scopedResources = ConvertTo-ChaosList (Get-ChaosStudyScopedResource -SubscriptionId $SubscriptionId -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName)
+    $evaluation = Assert-ChaosWorkspaceEvaluation -SubscriptionId $SubscriptionId -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName
 
-    $region = Get-ChaosScopeRegion -Workspace $workspace -ScopedResources $scopedResources
+    $region = Get-ChaosScopeRegion -WorkspaceLocation $workspace.location -ScopedResources $scopedResources
     if (-not $region) {
         Assert-ChaosActionDiscovery -Reason 'The workspace scope spans more than one region, so there is no single region whose action inventory applies to it.' `
             -Remediation 'Narrow the workspace scopes to one region, or pass -FilterLocation to bound the run and re-scope against that region.'
@@ -249,7 +250,7 @@ if (-not $SkipDiscovery) {
             -Remediation 'Pick a region where Chaos Studio publishes actions, or move the scoped resources.'
     }
 
-    $scenarios = ConvertTo-ChaosList (Get-ChaosStudyScenario -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName)
+    $scenarios = ConvertTo-ChaosList (Get-ChaosStudyScenario -SubscriptionId $SubscriptionId -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName)
     $discoveryPerformedAt = Get-ChaosUtcNow
 }
 
@@ -376,7 +377,7 @@ else {
 $predicate = ConvertFrom-ChaosSteadyState -Text $SteadyState
 
 $blastRadius = New-ChaosBlastRadius -Location $FilterLocation -Zone $FilterZone -PhysicalZone $FilterPhysicalZone `
-    -ExcludeResource $ExcludeResource -ExcludeType $ExcludeType -ExcludeTag $ExcludeTag
+    -ExcludeResource $ExcludeResource -ExcludeType $ExcludeType -ExcludeTags $ExcludeTag
 
 $projected = ConvertTo-ChaosList (Resolve-ChaosBlastRadiusResource -ScopedResources $scopedResources -BlastRadius $blastRadius)
 
@@ -450,7 +451,14 @@ $plan = [ordered]@{
             exclusions = $blastRadius.exclusions
         }
         projectedResourceCount = $(if ($SkipDiscovery) { $null } else { @($projected).Count })
-        projectedResources     = @(@($projected) | ForEach-Object { [string]$_.resourceId })
+        projectedResources     = @(@($projected) | ForEach-Object {
+                [ordered]@{
+                    resourceId   = [string]$_.resourceId
+                    resourceType = [string]$_.resourceType
+                    location     = [string]$_.location
+                    zones        = @($_.zones)
+                }
+            })
     }
 
     scenario    = [ordered]@{
@@ -490,8 +498,22 @@ $plan = [ordered]@{
         reversible      = ($selectedAction.actionType -and $selectedAction.actionType -ine 'Discrete')
         requiresConsent = $true
         abortConditions = @(
-            "Steady state $($predicate.raw) is breached beyond the recovery window."
-            'Any signal source stops reporting for longer than two intervals.'
+            [ordered]@{
+                id          = 'steady-state-breach'
+                kind        = 'predicate'
+                predicate   = $predicate
+                description = "Cancel the scenario run if steady state '$($predicate.raw)' is breached during injection."
+            }
+            if (@($SignalSource).Count -gt 0) {
+                [ordered]@{
+                    id                   = 'signal-unavailable'
+                    kind                 = 'missing-signal'
+                    sources              = @($SignalSource)
+                    intervalSeconds      = 60
+                    unavailableIntervals = 2
+                    description          = 'Cancel the scenario run if any configured signal remains unavailable for two evidence intervals.'
+                }
+            }
         )
     }
 
@@ -516,12 +538,14 @@ $plan = [ordered]@{
     }
 }
 
-$plan['frozenConfigHash'] = Get-ChaosDigest -InputObject $plan
+$safePlan = Protect-ChaosObject -InputObject $plan
+$safePlan['frozenConfigHash'] = Get-ChaosDigest -InputObject $safePlan
+$plan = $safePlan
 
 # -- Persist ---------------------------------------------------------------
 
-$study = New-ChaosStudy -ScopeHash $scopeHash -StudyRoot $StudyRoot
-Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath 'study-plan.v1.json' -Content $plan | Out-Null
+$study = New-ChaosStudy -ScopeHash $scopeHash -StudyRoot $StudyRoot -StudyId $StudyId
+Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath 'study-plan.v1.json' -Content $plan -SkipRedaction | Out-Null
 
 Add-ChaosCommandTrailEntry -StudyPath $study.path -Command 'chaos-study-scope' `
     -Arguments ([ordered]@{
@@ -568,10 +592,6 @@ if ($advisories.Count -gt 0) {
 
 if ($limitationCodes.Count -gt 0) {
     Write-ChaosStudyNote -Message ('The report will carry limitations: ' + ($limitationCodes -join ', ') + '.')
-}
-
-if (@($SignalSource).Count -eq 0) {
-    Write-ChaosStudyNote -Message 'No signal source configured. This study can only show that the control plane accepted the scenario run, never that the fault reached the workload.' -Level 'warn'
 }
 
 Write-Output ''

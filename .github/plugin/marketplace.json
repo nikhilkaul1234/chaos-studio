@@ -11,7 +11,7 @@
     {
       "name": "startchaos",
       "source": "./copilot-cli-plugin",
-      "description": "Guide Azure customers through the end-to-end Chaos Studio v2 Workspace experience: provision a workspace, configure scenarios, run experiments, and analyze impact with Azure Monitor correlation. Ships interactive skills and an MCP server for autonomous agents.",
+      "description": "Portable shell-agent skills, packaged for GitHub Copilot CLI, that provision Chaos Studio v2 workspaces, run scenarios and auditable reliability studies, and analyze Azure Monitor impact, plus an optional MCP server.",
       "version": "0.3.0",
       "author": { "name": "Azure Chaos Studio" },
       "homepage": "https://learn.microsoft.com/azure/chaos-studio/",

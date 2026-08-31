@@ -17,7 +17,8 @@
     Safety posture, inherited from the phase scripts rather than reinvented here:
 
       * -DryRun defaults to $true. Nothing is injected unless the caller both
-        passes -DryRun:$false AND types the consent phrase the plan prints.
+        prepares the exact RBAC preview, then a human types the plan-bound phrase
+        in a fresh run-skill invocation.
       * The plan is frozen and hashed before anything is armed. If the plan
         changes between scope and run, the run refuses.
       * Any non-zero exit from a phase stops the chain immediately. A partial
@@ -37,9 +38,10 @@
     Executes nothing.
 
 .EXAMPLE
-    ./Invoke-ChaosStudy.ps1 ... -DryRun:$false -Consent '<phrase the dry run prints>'
+    ./Invoke-ChaosStudy.ps1 ... -DryRun:$false
 
-    Runs the study for real, then reports and seals it.
+    Prepares and prints the exact approval preview, then stops. A human must type
+    the newly printed phrase in a direct chaos-study-run invocation.
 
 .EXAMPLE
     ./Invoke-ChaosStudy.ps1 -ListActions -SubscriptionId $sub -ResourceGroup rg-prod `
@@ -77,16 +79,19 @@ param(
     [Parameter(ParameterSetName = 'Study', Mandatory)][string]$Action,
     [Parameter(ParameterSetName = 'Study', Mandatory)][string]$SteadyState,
     [Parameter(ParameterSetName = 'Study')][ValidateRange(1, 240)][int]$DurationMinutes = 10,
-    [Parameter(ParameterSetName = 'Study')][ValidateRange(0, 240)][int]$BaselineMinutes = 5,
-    [Parameter(ParameterSetName = 'Study')][ValidateRange(0, 240)][int]$RecoveryMinutes = 10,
+    [Parameter(ParameterSetName = 'Study')][ValidateRange(1, 240)][int]$BaselineMinutes = 5,
+    [Parameter(ParameterSetName = 'Study')][ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
     [Parameter(ParameterSetName = 'Study')][hashtable]$Parameters,
     [Parameter(ParameterSetName = 'Study')][string]$Hypothesis,
     [Parameter(ParameterSetName = 'Study')][string[]]$SignalSource = @(),
 
     # Blast radius, forwarded to the scenario configuration.
     [Parameter(ParameterSetName = 'Study')][string[]]$FilterLocation = @(),
+    [Parameter(ParameterSetName = 'Study')][ValidateSet('1', '2', '3', 'zone-redundant')][string[]]$FilterZone = @(),
+    [Parameter(ParameterSetName = 'Study')][string]$FilterPhysicalZone,
     [Parameter(ParameterSetName = 'Study')][string[]]$ExcludeResource = @(),
     [Parameter(ParameterSetName = 'Study')][string[]]$ExcludeType = @(),
+    [Parameter(ParameterSetName = 'Study')][hashtable]$ExcludeTag,
 
     [Parameter(ParameterSetName = 'Study')][string]$StudyRoot,
     [Parameter(ParameterSetName = 'Study')][bool]$DryRun = $true,
@@ -110,7 +115,7 @@ $reportScript = Join-Path $skillsRoot 'chaos-study-report' 'scripts' 'Invoke-Cha
 
 foreach ($required in @($scopeScript, $runScript, $reportScript)) {
     if (-not (Test-Path -LiteralPath $required)) {
-        Write-Error-Card -Title 'Skill suite incomplete' -Body @"
+        Write-Error-Card -Title 'Skill suite incomplete' -ErrorMessage @"
 Expected phase script not found:
 
   $required
@@ -138,36 +143,35 @@ function Invoke-ChaosPhase {
         [Parameter(Mandatory)][hashtable]$Arguments
     )
 
-    $argv = [System.Collections.Generic.List[string]]::new()
-    $argv.Add('-NoProfile')
-    $argv.Add('-File')
-    $argv.Add($Script)
-    foreach ($key in ($Arguments.Keys | Sort-Object)) {
-        $value = $Arguments[$key]
-        if ($null -eq $value) { continue }
-        if ($value -is [switch]) {
-            if ($value.IsPresent) { $argv.Add("-$key") }
-            continue
+    $token = [guid]::NewGuid().ToString('N')
+    $argumentsPath = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-study-$token.clixml"
+    $wrapperPath = Join-Path ([System.IO.Path]::GetTempPath()) "chaos-study-$token.ps1"
+    try {
+        $portableArguments = @{}
+        foreach ($key in $Arguments.Keys) {
+            $value = $Arguments[$key]
+            $portableArguments[$key] = if ($value -is [switch]) { [bool]$value.IsPresent } else { $value }
         }
-        if ($value -is [bool]) {
-            $argv.Add("-${key}:`$$($value.ToString().ToLowerInvariant())")
-            continue
-        }
-        if ($value -is [array]) {
-            if ($value.Count -eq 0) { continue }
-            $argv.Add("-$key")
-            $argv.Add(($value -join ','))
-            continue
-        }
-        $argv.Add("-$key")
-        $argv.Add([string]$value)
-    }
+        $portableArguments | Export-Clixml -LiteralPath $argumentsPath -Depth 32
+        [System.IO.File]::WriteAllText($wrapperPath, @'
+param(
+    [Parameter(Mandatory)][string]$PhaseScript,
+    [Parameter(Mandatory)][string]$ArgumentsFile
+)
+$phaseArguments = Import-Clixml -LiteralPath $ArgumentsFile
+& $PhaseScript @phaseArguments
+if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }
+if (-not $?) { exit 1 }
+exit 0
+'@, [System.Text.UTF8Encoding]::new($false))
 
-    Write-ChaosStudyNote -Message "phase: $Name"
-    # The child's output is written straight through rather than returned, so the
-    # function's only return value is the exit code.
-    & pwsh @argv | ForEach-Object { Write-Host $_ }
-    return $LASTEXITCODE
+        Write-ChaosStudyNote -Message "phase: $Name"
+        & pwsh -NoProfile -File $wrapperPath -PhaseScript $Script -ArgumentsFile $argumentsPath |
+            ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    } finally {
+        Remove-Item -LiteralPath $argumentsPath, $wrapperPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Stop-OnPhaseFailure {
@@ -177,7 +181,7 @@ function Stop-OnPhaseFailure {
         [Parameter(Mandatory)][string]$Guidance
     )
     if ($ExitCode -eq 0) { return }
-    Write-Error-Card -Title "Study stopped in phase: $Name" -Body @"
+    Write-Error-Card -Title "Study stopped in phase: $Name" -ErrorMessage @"
 $Name exited with code $ExitCode.
 
 $Guidance
@@ -188,6 +192,8 @@ from this phase without re-planning.
 "@
     exit $ExitCode
 }
+
+if ($MyInvocation.InvocationName -eq '.') { return }
 
 # ---------------------------------------------------------------------------
 # Action listing short-circuits the chain
@@ -215,6 +221,7 @@ if ($PSCmdlet.ParameterSetName -in @('ListActions', 'ListScenarios')) {
 # Phase 1 - scope
 # ---------------------------------------------------------------------------
 
+$plannedStudyId = New-ChaosStudyId
 $scopeArgs = @{
     SubscriptionId  = $SubscriptionId
     ResourceGroup   = $ResourceGroup
@@ -225,6 +232,7 @@ $scopeArgs = @{
     DurationMinutes = $DurationMinutes
     BaselineMinutes = $BaselineMinutes
     RecoveryMinutes = $RecoveryMinutes
+    StudyId          = $plannedStudyId
 }
 if ($CreateWorkspace) { $scopeArgs['CreateWorkspace'] = [switch]::Present }
 if ($Scope.Count -gt 0) { $scopeArgs['Scope'] = $Scope }
@@ -233,21 +241,14 @@ if ($Hypothesis) { $scopeArgs['Hypothesis'] = $Hypothesis }
 if ($StudyRoot) { $scopeArgs['StudyRoot'] = $StudyRoot }
 if ($SignalSource.Count -gt 0) { $scopeArgs['SignalSource'] = $SignalSource }
 if ($FilterLocation.Count -gt 0) { $scopeArgs['FilterLocation'] = $FilterLocation }
+if ($FilterZone.Count -gt 0) { $scopeArgs['FilterZone'] = $FilterZone }
+if ($FilterPhysicalZone) { $scopeArgs['FilterPhysicalZone'] = $FilterPhysicalZone }
 if ($ExcludeResource.Count -gt 0) { $scopeArgs['ExcludeResource'] = $ExcludeResource }
 if ($ExcludeType.Count -gt 0) { $scopeArgs['ExcludeType'] = $ExcludeType }
+if ($ExcludeTag -and $ExcludeTag.Count -gt 0) { $scopeArgs['ExcludeTag'] = $ExcludeTag }
 if ($SkipDiscovery) { $scopeArgs['SkipDiscovery'] = [switch]::Present }
 if ($Parameters -and $Parameters.Count -gt 0) {
-    # Hashtables cannot cross the pwsh -File boundary, so parameterised scenarios
-    # are planned by calling the scope skill directly rather than through this chain.
-    Write-Error-Card -Title 'Use the scope skill for parameterised scenarios' -Body @"
--Parameters cannot be forwarded through the chained entry point.
-
-Plan the study with the scope skill directly, then continue here or with the run
-skill against the resulting study id:
-
-  chaos-study-scope -Scenario $Scenario -Action $Action -Parameters @{ ... }
-"@
-    exit (Get-ChaosStudyExitCode -Name 'Error')
+    $scopeArgs['Parameters'] = $Parameters
 }
 
 $scopeExit = Invoke-ChaosPhase -Name 'chaos-study-scope' -Script $scopeScript -Arguments $scopeArgs
@@ -261,9 +262,9 @@ those resources. A failure here is a real answer, not an obstacle to work around
 "@
 
 $store = if ($StudyRoot) { $StudyRoot } else { (Get-ChaosStudyRoot).path }
-$latest = Find-ChaosStudy -StudyId 'latest' -StudyRoot $store
+$latest = Find-ChaosStudy -StudyId $plannedStudyId -StudyRoot $store
 if (-not $latest) {
-    Write-Error-Card -Title 'Plan not found' -Body 'Scoping reported success but no study was recorded. Refusing to continue.'
+    Write-Error-Card -Title 'Plan not found' -ErrorMessage 'Scoping reported success but the study it was asked to create was not recorded. Refusing to continue.'
     exit (Get-ChaosStudyExitCode -Name 'Error')
 }
 $studyId = $latest.studyId
@@ -274,7 +275,7 @@ Study $studyId is planned and frozen. Nothing has been executed.
 
 Review the plan, then run it when you are ready:
 
-  chaos-study-run -StudyId $studyId -DryRun:`$false -Consent '<phrase from the plan>'
+  chaos-study-run -StudyId $studyId -PrepareApproval
 "@
     exit 0
 }
@@ -288,7 +289,15 @@ $runArgs = @{
     DryRun  = $DryRun
 }
 if ($StudyRoot) { $runArgs['StudyRoot'] = $StudyRoot }
-if ($Consent) { $runArgs['Consent'] = $Consent }
+if (-not $DryRun) {
+    # A consent value supplied before the exact RBAC preview is not fresh. This
+    # invocation prepares that preview and stops; the human then approves in a
+    # new direct run-skill invocation against this exact study id.
+    $runArgs['DryRun'] = $true
+    $runArgs['PrepareApproval'] = [switch]::Present
+} elseif ($Consent) {
+    $runArgs['Consent'] = $Consent
+}
 if ($KeepConfiguration) { $runArgs['KeepConfiguration'] = [switch]::Present }
 if ($SignalSource.Count -gt 0) { $runArgs['SignalSource'] = $SignalSource }
 
@@ -300,14 +309,26 @@ Stop-OnPhaseFailure -Name 'chaos-study-run' -ExitCode $runExit -Guidance @"
   exit 17  the scenario configuration did not validate - fix what it reported
 "@
 
+if (-not $DryRun) {
+    Write-Card -Title 'Approval prepared - fresh human input required' -Status 'warning' -Body @"
+Study $studyId has not executed. The frozen blast radius and exact RBAC changes
+were displayed by the run phase. A human must review them and type the printed
+phrase in a new invocation; this orchestrator will not reuse consent supplied
+before that preview.
+
+  chaos-study-run -StudyId $studyId -DryRun:`$false -Consent '<human-typed phrase>'
+"@
+    exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+}
+
 if ($DryRun) {
     Write-Card -Title 'Dry run complete' -Status 'success' -Body @"
 Study $studyId was previewed end to end. Nothing was executed, so there is no
 evidence to interpret and no report to write.
 
-When the preview matches your intent, arm it:
+When the preview matches your intent, prepare the exact RBAC preview:
 
-  chaos-study ... -DryRun:`$false -Consent '<phrase from the preview>'
+  chaos-study-run -StudyId $studyId -PrepareApproval
 "@
     exit 0
 }

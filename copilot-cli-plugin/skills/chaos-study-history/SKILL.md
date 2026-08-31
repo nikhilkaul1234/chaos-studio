@@ -8,6 +8,11 @@ description: "List, inspect, compare, and re-run past Chaos reliability studies 
 A single study is a snapshot. Reliability is a trend. This skill reads the dated
 study store so a chat weeks later can pick up exactly where the last one left off.
 
+The phase is portable to any shell-capable agent that can reopen the durable
+study store, retain artifact continuity across turns, and propagate exit codes.
+It calls no Azure API and never executes a printed rerun. Copilot CLI provides
+packaging only; SRE Agent consumption is intended but not yet validated here.
+
 ## Principles
 
 **Studies are immutable.** A sealed study is a historical record. Re-testing
@@ -28,10 +33,10 @@ genuinely different problem never masquerades as the same one.
 — and `unknown` is used honestly whenever the evidence does not support a call.
 
 **Re-run prints, it does not execute.** The `rerun` action emits the exact scope
-command that reproduces a study. You review it and run it. Nothing is executed
-from here. Because scoping re-queries the live action list, a rerun of a study
-whose action the platform no longer offers fails loudly instead of silently
-testing something else.
+command that reproduces the frozen scenario parameters, signals, filters, and
+exclusions as a new study. You review it and run it. Nothing is executed from
+here. Scoping re-queries the live action list and discovered resources, so drift
+fails loudly instead of silently widening the study.
 
 ## Usage
 

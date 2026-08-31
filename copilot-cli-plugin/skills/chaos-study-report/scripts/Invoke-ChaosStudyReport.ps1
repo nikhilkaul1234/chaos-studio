@@ -81,10 +81,9 @@ if (Test-Path -LiteralPath $trailPath) {
     )
 }
 
-$manifest = Read-ChaosJsonFile -Path (Join-Path $studyPath 'manifest.json')
-$html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence -Manifest $manifest -CommandTrail $commandTrail
-
 if ($study.state -eq 'SEALED') {
+    $manifest = Read-ChaosJsonFile -Path (Join-Path $studyPath 'manifest.json')
+    $html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence -Manifest $manifest -CommandTrail $commandTrail
     # A sealed study is immutable, so the report is rendered beside it -- in the
     # scope directory of the study store, never in the caller's working
     # directory, which is frequently a git repository we must not pollute.
@@ -98,8 +97,52 @@ A fresh render was written outside the study directory instead.
 }
 
 Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'findings.v1.json' -Content $findings | Out-Null
-Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'report.html' -Content $html -AsText -SkipRedaction | Out-Null
 Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'report' -Command 'Invoke-ChaosStudyReport' -ExitCode 0 -Note $findings.verdict | Out-Null
+
+# Include the report command in the rendered provenance.
+$commandTrail = @(
+    foreach ($line in [System.IO.File]::ReadAllLines($trailPath)) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) { $line | ConvertFrom-Json }
+    }
+)
+
+$identity = [ordered]@{
+    workspace     = [string]$plan.workspace.name
+    workspaceId   = [string]$plan.workspace.id
+    region        = [string]$plan.scope.region
+    scenario      = [string]$plan.scenario.name
+    scenarioId    = [string]$plan.scenario.id
+    action        = [string]$plan.action.name
+    actionUrn     = [string]$plan.action.canonicalId
+    actionType    = [string]$plan.action.actionType
+    scopeCount    = $plan.scope.projectedResourceCount
+    predicate     = [string]$plan.question.steadyState.raw
+    windows       = [ordered]@{
+        baselineMinutes = $plan.windows.baselineMinutes
+        injectMinutes   = $plan.windows.injectMinutes
+        recoveryMinutes = $plan.windows.recoveryMinutes
+    }
+    planHash      = [string]$plan.frozenConfigHash
+}
+$manifestSummary = [ordered]@{
+    verdict         = $findings.verdict
+    mechanismProven = $findings.mechanismProven
+    findingCount    = @($findings.findings).Count
+    worstSeverity   = $(if (@($findings.findings).Count -gt 0) { @($findings.findings)[0].severity } else { 'none' })
+}
+
+$sealedAt = $null
+$manifest = $null
+if (-not $NoSeal) {
+    $sealedAt = Get-ChaosUtcNow
+    # At this point every durable input to the report exists. The preview
+    # manifest supplies the exact seal timestamp and all non-report hashes; the
+    # final manifest adds report.html after rendering, avoiding a self-hash cycle.
+    $manifest = New-ChaosStudyManifest -StudyPath $studyPath -Identity $identity -Summary $manifestSummary -SealedAt $sealedAt -ExcludeReport
+}
+
+$html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence -Manifest $manifest -CommandTrail $commandTrail
+Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'report.html' -Content $html -AsText -SkipRedaction | Out-Null
 
 $reportPath = Join-Path $studyPath 'report.html'
 if ($OutputPath) {
@@ -108,30 +151,7 @@ if ($OutputPath) {
 }
 
 if (-not $NoSeal) {
-    $identity = [ordered]@{
-        workspace     = [string]$plan.workspace.name
-        workspaceId   = [string]$plan.workspace.id
-        region        = [string]$plan.scope.region
-        scenario      = [string]$plan.scenario.name
-        scenarioId    = [string]$plan.scenario.id
-        action        = [string]$plan.action.name
-        actionUrn     = [string]$plan.action.canonicalId
-        actionType    = [string]$plan.action.actionType
-        scopeCount    = $plan.scope.projectedResourceCount
-        predicate     = [string]$plan.question.steadyState.raw
-        windows       = [ordered]@{
-            baselineMinutes = $plan.windows.baselineMinutes
-            injectMinutes   = $plan.windows.injectMinutes
-            recoveryMinutes = $plan.windows.recoveryMinutes
-        }
-        planHash      = [string]$plan.frozenConfigHash
-    }
-    Complete-ChaosStudy -StudyPath $studyPath -Identity $identity -Summary ([ordered]@{
-        verdict         = $findings.verdict
-        mechanismProven = $findings.mechanismProven
-        findingCount    = @($findings.findings).Count
-        worstSeverity   = $(if (@($findings.findings).Count -gt 0) { @($findings.findings)[0].severity } else { 'none' })
-    }) | Out-Null
+    Complete-ChaosStudy -StudyPath $studyPath -Identity $identity -Summary $manifestSummary -SealedAt $sealedAt | Out-Null
 }
 
 $status = switch ($findings.verdict) {
@@ -155,7 +175,7 @@ $conclusion = switch ($findings.verdict) {
         'The steady-state objective was breached and had not recovered by the end of the recovery window.'
     }
     default {
-        'The action could not be proven to have reached the scoped resources, so this study cannot support any claim about resilience to it. Treat the result as untested rather than passed.'
+        'The collected evidence cannot support a pass or fail. Treat the result as untested rather than passed, and review the limitations for the exact gap.'
     }
 }
 

@@ -204,8 +204,7 @@ function Test-ChaosActionParameterFit {
 function Test-ChaosObservabilityCoverage {
     <#
     .SYNOPSIS
-        Advisory: is any signal source configured that could prove the fault
-        landed?
+        Blocking: can a signal prove the fault landed and enforce live abort?
     #>
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$AvailableSources,
@@ -214,8 +213,8 @@ function Test-ChaosObservabilityCoverage {
 
     if (@($AvailableSources).Count -eq 0) {
         return New-ChaosReadinessGate -Id 'observability' -Title 'A signal can prove the fault landed' `
-            -Status 'fail' -Severity 'advisory' `
-            -Detail 'No signal source was configured. The study can still run, but it will only be able to prove that the control plane accepted the scenario run - never that the fault reached the workload. Every finding will carry mechanismProven: false.' `
+            -Status 'fail' -Severity 'blocking' `
+            -Detail 'No signal source was configured. The steady-state predicate and telemetry-loss abort condition could not be evaluated during injection, so the safety contract would not be enforceable.' `
             -Remediation 'Re-run with -SignalSource "metrics:<metricName>" or -SignalSource "logs:<workspaceId>#<kql>".' `
             -LimitationCode 'L3'
     }

@@ -12,7 +12,7 @@ recovers.
 
 | Component | Path | What it is |
 |---|---|---|
-| **Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create workspaces, configure scenarios, run experiments, and analyze impact — from a conversation or an autonomous agent. |
+| **Portable agent skills + Copilot CLI plugin + MCP server** | [`copilot-cli-plugin/`](copilot-cli-plugin/) | Create workspaces, configure scenarios, run auditable reliability studies, and analyze impact from any compatible shell-agent host; Copilot CLI packaging and MCP tools are included. |
 | **Scenarios** | [`scenarios/`](scenarios/) | Shareable custom Scenario definitions (Bicep/JSON) beyond the built-in templates. |
 | **Samples** | [`samples/`](samples/) | Sample apps and infrastructure you can deploy and break to practice. |
 
