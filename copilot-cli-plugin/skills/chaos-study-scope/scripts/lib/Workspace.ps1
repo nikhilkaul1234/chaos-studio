@@ -297,6 +297,8 @@ function ConvertTo-ChaosScopedResourceRecord {
     if ([string]::IsNullOrWhiteSpace($resourceId)) {
         $resourceId = [string](& $read $Resource 'id')
     }
+    $tags = & $read $properties 'tags'
+    if ($null -eq $tags) { $tags = & $read $Resource 'tags' }
 
     return [pscustomobject]@{
         name         = [string](& $read $Resource 'name')
@@ -304,6 +306,7 @@ function ConvertTo-ChaosScopedResourceRecord {
         resourceType = [string](& $read $properties 'type')
         location     = [string](& $read $properties 'location')
         zones        = @($zones)
+        tags         = $tags
     }
 }
 
@@ -415,7 +418,7 @@ function New-ChaosBlastRadius {
         [AllowNull()][AllowEmptyCollection()][string[]]$PhysicalZones,
         [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeResources,
         [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeTypes,
-        [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeTags
+        [AllowNull()][System.Collections.IDictionary]$ExcludeTags
     )
 
     $zoneList = @(@($Zones) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -445,14 +448,20 @@ function New-ChaosBlastRadius {
 
     $resourceList = @(@($ExcludeResources) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $typeList = @(@($ExcludeTypes) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $tagList = @(@($ExcludeTags) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $tagPairs = @()
+    if ($null -ne $ExcludeTags) {
+        foreach ($key in @($ExcludeTags.Keys | Sort-Object)) {
+            if ([string]::IsNullOrWhiteSpace([string]$key)) { continue }
+            $tagPairs += [ordered]@{ key = [string]$key; value = $ExcludeTags[$key] }
+        }
+    }
 
     $exclusions = $null
-    if ($resourceList.Count -gt 0 -or $typeList.Count -gt 0 -or $tagList.Count -gt 0) {
+    if ($resourceList.Count -gt 0 -or $typeList.Count -gt 0 -or $tagPairs.Count -gt 0) {
         $exclusions = [ordered]@{}
         if ($resourceList.Count -gt 0) { $exclusions['resources'] = @($resourceList) }
         if ($typeList.Count -gt 0) { $exclusions['types'] = @($typeList) }
-        if ($tagList.Count -gt 0) { $exclusions['tags'] = @($tagList) }
+        if ($tagPairs.Count -gt 0) { $exclusions['tags'] = @($tagPairs) }
     }
 
     return [pscustomobject]@{
@@ -549,6 +558,32 @@ function Resolve-ChaosBlastRadiusResource {
             $typeSet = @(@($blockedTypes) | ForEach-Object { ([string]$_).ToLowerInvariant() })
             $candidates = @($candidates | Where-Object {
                     [string]::IsNullOrWhiteSpace($_.resourceType) -or $typeSet -notcontains $_.resourceType.ToLowerInvariant()
+                })
+        }
+
+        $blockedTags = Get-ChaosBlastRadiusMember -Container $exclusions -Name 'tags'
+        if ($null -ne $blockedTags) {
+            $candidates = @($candidates | Where-Object {
+                    $resourceTags = $_.tags
+                    if ($null -eq $resourceTags) { return $true }
+                    foreach ($tagPair in @($blockedTags)) {
+                        $tagName = if ($tagPair -is [System.Collections.IDictionary]) { [string]$tagPair['key'] } else { [string]$tagPair.key }
+                        $expected = if ($tagPair -is [System.Collections.IDictionary]) { $tagPair['value'] } else { $tagPair.value }
+                        $actualProperty = @($resourceTags.PSObject.Properties | Where-Object { $_.Name -ieq [string]$tagName } | Select-Object -First 1)
+                        if ($resourceTags -is [System.Collections.IDictionary]) {
+                            $actualKey = @($resourceTags.Keys | Where-Object { [string]$_ -ieq [string]$tagName } | Select-Object -First 1)
+                            if (
+                                $actualKey.Count -gt 0 -and
+                                ([string]$expected -eq '*' -or [string]$resourceTags[$actualKey[0]] -ieq [string]$expected)
+                            ) { return $false }
+                        } elseif (
+                            $actualProperty.Count -gt 0 -and
+                            ([string]$expected -eq '*' -or [string]$actualProperty[0].Value -ieq [string]$expected)
+                        ) {
+                            return $false
+                        }
+                    }
+                    return $true
                 })
         }
     }

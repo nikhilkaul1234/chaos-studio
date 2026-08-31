@@ -549,6 +549,32 @@ function Get-ChaosSignalValueMap {
     return $map
 }
 
+function Test-ChaosPredicate {
+    <#
+    .SYNOPSIS
+        Evaluate a frozen steady-state predicate against one measurement.
+
+    .OUTPUTS
+        $true held, $false breached, $null not measurable.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Predicate,
+        [AllowNull()][object]$Value
+    )
+    if ($null -eq $Value) { return $null }
+    $threshold = [double]$Predicate.threshold
+    $actual = [double]$Value
+    switch ([string]$Predicate.comparison) {
+        '>=' { return $actual -ge $threshold }
+        '>'  { return $actual -gt $threshold }
+        '<=' { return $actual -le $threshold }
+        '<'  { return $actual -lt $threshold }
+        '==' { return $actual -eq $threshold }
+        '!=' { return $actual -ne $threshold }
+        default { return $null }
+    }
+}
+
 # -- HTML escaping (NFR-8) --------------------------------
 function ConvertTo-ChaosHtmlText {
     <#

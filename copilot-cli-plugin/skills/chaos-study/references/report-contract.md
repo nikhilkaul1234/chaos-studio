@@ -110,9 +110,9 @@ This is what makes the report citable rather than merely readable.
 | Verdict | Condition |
 |---|---|
 | `Steady state held` | no finding above `low` |
-| `Degraded but recovered` | worst finding is `medium` or `high` |
+| `Degraded but recovered` | a measured breach recovered in the post window |
 | `Steady state breached` | any `critical` finding |
-| `Inconclusive` | mechanism unproven, or no signal source covered the impact |
+| `Inconclusive` | mechanism unproven, recovery unmeasured, or telemetry loss aborted the run |
 
 `Inconclusive` is a legitimate and useful outcome. It must never be reported as
 a pass.

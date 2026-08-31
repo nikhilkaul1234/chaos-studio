@@ -57,32 +57,6 @@ function Get-ChaosSignalValue {
     return $map[$Name]
 }
 
-function Test-ChaosPredicate {
-    <#
-    .SYNOPSIS
-        Evaluate a steady-state predicate against a measurement.
-
-    .OUTPUTS
-        $true held, $false breached, $null not measurable.
-    #>
-    param(
-        [Parameter(Mandatory)][object]$Predicate,
-        [AllowNull()][object]$Value
-    )
-    if ($null -eq $Value) { return $null }
-    $threshold = [double]$Predicate.threshold
-    $actual = [double]$Value
-    switch ([string]$Predicate.comparison) {
-        '>=' { return $actual -ge $threshold }
-        '>'  { return $actual -gt $threshold }
-        '<=' { return $actual -le $threshold }
-        '<'  { return $actual -lt $threshold }
-        '==' { return $actual -eq $threshold }
-        '!=' { return $actual -ne $threshold }
-        default { return $null }
-    }
-}
-
 function Get-ChaosImpactDelta {
     <#
     .SYNOPSIS
@@ -219,11 +193,18 @@ function Get-ChaosVerdict {
     #>
     param(
         [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Findings,
-        [Parameter(Mandatory)][AllowNull()][object]$MechanismProven
+        [Parameter(Mandatory)][AllowNull()][object]$MechanismProven,
+        [AllowNull()][object]$PredicateMeasured,
+        [AllowNull()][object]$RecoveryMeasured,
+        [AllowNull()][object]$Abort
     )
     $severities = @($Findings | ForEach-Object { $_.severity })
     if ($severities -contains 'critical') { return 'Steady state breached' }
+    if ($null -ne $Abort -and $Abort.triggered -eq $true -and [string]$Abort.kind -eq 'missing-signal') {
+        return 'Inconclusive'
+    }
     if ($MechanismProven -ne $true) { return 'Inconclusive' }
+    if ($null -eq $PredicateMeasured -or $null -eq $RecoveryMeasured) { return 'Inconclusive' }
     if ($severities -contains 'high' -or $severities -contains 'medium') { return 'Degraded but recovered' }
     return 'Steady state held'
 }
@@ -342,10 +323,26 @@ function Build-StudyFindings {
             )
     }
 
+    $abort = $null
+    if ($RunRecord.scenarioRun.PSObject.Properties.Name -contains 'abort') {
+        $abort = $RunRecord.scenarioRun.abort
+    }
+    if ($null -ne $abort -and $abort.triggered -eq $true) {
+        $limitations += 'L8'
+        $abortSignal = if ([string]::IsNullOrWhiteSpace([string]$abort.source)) { 'all-sources' } else { [string]$abort.source }
+        $findings += New-ChaosFinding -Key (Get-ChaosFindingKey -ActionUrn $actionIdentity -Signal $abortSignal -Predicate "abort:$($abort.conditionId)") `
+            -Title "Automatic abort triggered: $($abort.conditionId)" `
+            -Severity 'low' -Confidence 'high' `
+            -Observation "The frozen abort condition tripped at $($abort.observedAt): $($abort.reason)" `
+            -Interpretation 'The suite requested cancellation through the Chaos Studio scenario-run cancel operation instead of allowing the injection window to continue.' `
+            -Evidence @([ordered]@{ signal = $abortSignal; window = 'during'; kind = 'abort' }) `
+            -Remediation @('Review the abort-check evidence and correct the condition that tripped before repeating the study.')
+    }
+
     $missing = @(@($pre + $during + $post) | Where-Object { $null -eq $_.values })
     if ($missing.Count -gt 0 -and $limitations -notcontains 'L2') { $limitations += 'L2' }
     if ([int]$Plan.windows.injectMinutes -le 3) { $limitations += 'L7' }
-    if ($RunRecord.scenarioRun.outcome -in @('Failed', 'Cancelled')) { $limitations += 'L8' }
+    if ($RunRecord.scenarioRun.outcome -in @('Failed', 'Canceled', 'Cancelled', 'Aborted')) { $limitations += 'L8' }
     if ($RunRecord.planHash -ne $Plan.frozenConfigHash) { $limitations += 'L9' }
     foreach ($code in @($Plan.readiness.limitationCodes)) {
         if ($code -and $limitations -notcontains $code) { $limitations += $code }
@@ -359,7 +356,8 @@ function Build-StudyFindings {
         studyId         = $RunRecord.studyId
         scopeHash       = $RunRecord.scopeHash
         planHash        = $Plan.frozenConfigHash
-        verdict         = Get-ChaosVerdict -Findings $sorted -MechanismProven $mechanismProven
+        verdict         = Get-ChaosVerdict -Findings $sorted -MechanismProven $mechanismProven `
+            -PredicateMeasured $predicateDuring -RecoveryMeasured $predicatePost -Abort $abort
         mechanismProven = $mechanismProven
         mechanismDetail = $delta.detail
         predicate       = [ordered]@{

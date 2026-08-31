@@ -112,7 +112,7 @@ function Get-ChaosMetricSignal {
         return New-ChaosSignalResult -Source $Spec.id -Window $windowName `
             -Caveat "No resource could be resolved for metric '$($Spec.metricName)'. Pin one with 'metrics:$($Spec.metricName)@<resourceId>' - a study over several scoped resources has no single implied resource."
     }
-    $timespan = "$(ConvertTo-ChaosUtcIso -Instant $Window.start)/$(ConvertTo-ChaosUtcIso -Instant $Window.end)"
+    $timespan = "$($Window.startUtc)/$($Window.endUtc)"
     $query = [ordered]@{
         resourceId  = $metricTarget
         metric      = $Spec.metricName
@@ -209,7 +209,7 @@ function Get-ChaosLogSignal {
     )
 
     $windowName = $Window.name
-    $timespan = "$(ConvertTo-ChaosUtcIso -Instant $Window.start)/$(ConvertTo-ChaosUtcIso -Instant $Window.end)"
+    $timespan = "$($Window.startUtc)/$($Window.endUtc)"
     $query = [ordered]@{ workspaceId = $Spec.workspaceId; kql = $Spec.query; timespan = $timespan }
 
     try {
@@ -325,5 +325,165 @@ function Test-ChaosSignalCoverage {
         missing     = $all.Count - $measured.Count
         caveats     = @($all | Where-Object { $_.caveat } | ForEach-Object { $_.caveat } | Select-Object -Unique)
         anyMeasured = ($measured.Count -gt 0)
+    }
+}
+
+function Get-ChaosAbortConditionDescription {
+    param([Parameter(Mandatory)][object]$Condition)
+
+    if ($Condition -is [string]) { return $Condition }
+    if ($Condition.PSObject.Properties.Name -contains 'description') {
+        return [string]$Condition.description
+    }
+    return ConvertTo-ChaosCanonicalJson -InputObject $Condition
+}
+
+function Get-ChaosPredicateSignalValue {
+    param(
+        [Parameter(Mandatory)][object[]]$Signals,
+        [Parameter(Mandatory)][object]$Predicate
+    )
+
+    $signalName = [string]$Predicate.signal
+    $signal = @($Signals | Where-Object {
+            $_.source -eq "metrics:$signalName" -or $_.source -eq $signalName
+        } | Select-Object -First 1)
+    if ($signal.Count -eq 0) { return $null }
+
+    foreach ($candidate in @($signalName, 'value', 'last', 'mean')) {
+        $map = Get-ChaosSignalValueMap -Signal $signal[0]
+        if ($map.Contains($candidate)) { return $map[$candidate] }
+    }
+    return $null
+}
+
+function Invoke-ChaosAbortEvaluation {
+    <#
+    .SYNOPSIS
+        Evaluate the plan's frozen abort contract against one live signal check.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][object[]]$Signals,
+        [Parameter(Mandatory)][object]$Window,
+        [Parameter(Mandatory)][datetime]$InjectionStartedAt,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$State
+    )
+
+    if (-not $State.Contains('missingSince')) {
+        $State['missingSince'] = [ordered]@{}
+    }
+
+    $observedAt = ConvertFrom-ChaosUtcIso -Text ([string]$Window.endUtc)
+    $evaluations = @()
+    $trigger = $null
+
+    foreach ($condition in @($Plan.safety.abortConditions)) {
+        if ($null -eq $condition -or $condition -is [string]) {
+            $evaluations += [ordered]@{
+                conditionId = 'unsupported'
+                status      = 'not-evaluated'
+                detail      = 'The frozen abort condition is not structured and cannot be evaluated.'
+            }
+            continue
+        }
+
+        $kind = [string]$condition.kind
+        $conditionId = [string]$condition.id
+        switch ($kind) {
+            'predicate' {
+                $value = Get-ChaosPredicateSignalValue -Signals $Signals -Predicate $condition.predicate
+                $held = Test-ChaosPredicate -Predicate $condition.predicate -Value $value
+                $detail = if ($null -eq $held) {
+                    "Predicate '$($condition.predicate.raw)' could not be evaluated in this check."
+                } elseif ($held) {
+                    "Predicate '$($condition.predicate.raw)' held."
+                } else {
+                    "Predicate '$($condition.predicate.raw)' was breached."
+                }
+                $evaluations += [ordered]@{
+                    conditionId = $conditionId
+                    kind        = $kind
+                    status      = if ($null -eq $held) { 'not-measured' } elseif ($held) { 'clear' } else { 'triggered' }
+                    value       = $value
+                    detail      = $detail
+                }
+                if ($held -eq $false -and $null -eq $trigger) {
+                    $trigger = [ordered]@{
+                        conditionId = $conditionId
+                        kind        = $kind
+                        source      = [string]$condition.predicate.signal
+                        reason      = $detail
+                    }
+                }
+            }
+            'missing-signal' {
+                $intervalSeconds = [int]$condition.intervalSeconds
+                $unavailableIntervals = [int]$condition.unavailableIntervals
+                $thresholdSeconds = $intervalSeconds * $unavailableIntervals
+
+                foreach ($sourceSpec in @($condition.sources)) {
+                    $sourceId = [string]$sourceSpec
+                    try { $sourceId = (ConvertFrom-ChaosSignalSourceSpec -Spec ([string]$sourceSpec)).id } catch { }
+                    $signal = @($Signals | Where-Object { $_.source -eq $sourceId } | Select-Object -First 1)
+                    $measured = ($signal.Count -gt 0 -and $null -ne $signal[0].values)
+
+                    if ($measured) {
+                        if ($State.missingSince.Contains($sourceId)) {
+                            $State.missingSince.Remove($sourceId)
+                        }
+                        $evaluations += [ordered]@{
+                            conditionId = $conditionId
+                            kind        = $kind
+                            source      = $sourceId
+                            status      = 'clear'
+                            detail      = "Signal '$sourceId' reported data."
+                        }
+                        continue
+                    }
+
+                    if (-not $State.missingSince.Contains($sourceId)) {
+                        $State.missingSince[$sourceId] = $InjectionStartedAt
+                    }
+                    $missingSince = [datetime]$State.missingSince[$sourceId]
+                    $missingSeconds = [int][math]::Floor(($observedAt - $missingSince).TotalSeconds)
+                    $tripped = $missingSeconds -ge $thresholdSeconds
+                    $detail = "Signal '$sourceId' has not reported data for $missingSeconds second(s); the frozen limit is $thresholdSeconds second(s)."
+                    $evaluations += [ordered]@{
+                        conditionId  = $conditionId
+                        kind         = $kind
+                        source       = $sourceId
+                        status       = if ($tripped) { 'triggered' } else { 'pending' }
+                        missingSince = ConvertTo-ChaosUtcIso -Instant $missingSince
+                        detail       = $detail
+                    }
+                    if ($tripped -and $null -eq $trigger) {
+                        $trigger = [ordered]@{
+                            conditionId = $conditionId
+                            kind        = $kind
+                            source      = $sourceId
+                            reason      = $detail
+                        }
+                    }
+                }
+            }
+            default {
+                $evaluations += [ordered]@{
+                    conditionId = $conditionId
+                    kind        = $kind
+                    status      = 'not-evaluated'
+                    detail      = "Abort condition kind '$kind' is not supported."
+                }
+            }
+        }
+    }
+
+    return [pscustomobject]@{
+        observedAt = [string]$Window.endUtc
+        window     = $Window
+        triggered  = ($null -ne $trigger)
+        trigger    = $trigger
+        evaluations = @($evaluations)
+        signals    = @($Signals)
     }
 }

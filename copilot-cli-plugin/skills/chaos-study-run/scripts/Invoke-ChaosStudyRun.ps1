@@ -5,11 +5,14 @@
     record what happened.
 
 .DESCRIPTION
-    This is the only script in the suite that changes production. It is
-    therefore the most conservative one:
+    This is the only script in the suite that injects a fault. Approval
+    preparation creates and deletes a temporary scenario configuration; the
+    armed path may apply the exact RBAC changes a human reviewed. It is therefore
+    the most conservative script:
 
       * It refuses to run a plan that changed after it was frozen.
-      * It does nothing without an explicit, plan-specific consent phrase.
+      * It starts no scenario and applies no RBAC without an explicit,
+        plan-specific human consent phrase.
       * It defaults to a dry run, so the unarmed path is the default path.
       * It refuses to execute a scenario configuration that did not validate.
       * It cancels the scenario run and deletes the configuration it created,
@@ -24,8 +27,12 @@
     Previews the latest planned study without touching anything.
 
 .EXAMPLE
-    ./Invoke-ChaosStudyRun.ps1 -DryRun:$false -Consent 'inject <action> into <workspace> 3d1f87dd'
-    Runs it.
+    ./Invoke-ChaosStudyRun.ps1 -StudyId <id> -PrepareApproval
+    Displays the exact frozen plan, blast radius, and RBAC changes.
+
+.EXAMPLE
+    ./Invoke-ChaosStudyRun.ps1 -StudyId <id> -DryRun:$false -Consent '<human-typed phrase>'
+    Runs it after the fresh human approval handoff.
 #>
 
 [CmdletBinding()]
@@ -36,6 +43,7 @@ param(
     [string]$Consent,
     [string[]]$SignalSource = @(),
     [int]$PollSeconds = 20,
+    [switch]$PrepareApproval,
     [switch]$KeepConfiguration,
     [switch]$Force
 )
@@ -99,26 +107,130 @@ if ($sources.Count -eq 0 -and $plan.signals.configuredSources) {
     $sources = @($plan.signals.configuredSources)
 }
 
+if (-not (Test-ChaosPlanWindows -Plan $plan)) {
+    Write-ChaosStudyFailure -Title 'Plan windows are not executable' -Message @"
+Baseline, injection, and recovery windows must each be at least one minute.
+This plan contains baseline=$($plan.windows.baselineMinutes),
+injection=$($plan.windows.injectMinutes), recovery=$($plan.windows.recoveryMinutes).
+"@ -Remediation 'Re-run chaos-study-scope with non-zero windows. The plan was rejected before consent or Azure mutation.'
+    exit (Get-ChaosStudyExitCode -Name 'ConfigurationDrift')
+}
+
+$liveDiscoveryVerified = Test-ChaosPlanLiveDiscovery -Plan $plan
+
 $projectedCount = $plan.scope.projectedResourceCount
 $projectedText = if ($null -eq $projectedCount) { '(not resolved)' } else { "$projectedCount of $($plan.scope.discoveredResourceCount) discovered" }
+$blast = Get-ChaosBlastRadiusArgument -Plan $plan
+$configPreview = [ordered]@{
+    workspace          = $plan.workspace.name
+    resourceGroup      = $plan.workspace.resourceGroup
+    scenario           = $plan.scenario.name
+    configuration      = $configurationName
+    parameters         = @(Get-ChaosScenarioParameterList -Plan $plan)
+    filters            = $blast.filters
+    exclusions         = $blast.exclusions
+    projectedResources = @($plan.scope.projectedResources)
+}
+
+# -- Human approval preparation --------------------------------------------
+
+if ($PrepareApproval) {
+    if (-not $liveDiscoveryVerified) {
+        Write-ChaosStudyFailure -Title 'Live discovery is required before approval' -Message @"
+This plan was created without a complete live discovery result. Offline planning
+is supported, but an offline or otherwise unverified plan cannot produce an
+approval preview and can never arm.
+"@ -Remediation 'Re-run chaos-study-scope without -SkipDiscovery, then prepare approval for the new study id.'
+        exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
+    }
+
+    $approvalConfigurationName = "$configurationName-approval"
+    $configurationCreated = $false
+    try {
+        Write-ChaosStudyNote -Message "Creating temporary scenario configuration $approvalConfigurationName for approval preparation."
+        New-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName | Out-Null
+        $configurationCreated = $true
+        $prepared = Get-ChaosStudyApprovalPreview -Plan $plan -ConfigurationName $approvalConfigurationName
+
+        $approvalPreview = [ordered]@{
+            approvalPreviewVersion = 'approval-preview.v1'
+            studyId                = $study.studyId
+            planHash               = $plan.frozenConfigHash
+            generatedAt            = Get-ChaosUtcNow
+            consumedAt             = $null
+            approvalReady          = [bool]$prepared.approvalReady
+            blastRadius            = [ordered]@{
+                workspacePrincipalId = $plan.workspace.identityPrincipalId
+                filters              = $blast.filters
+                exclusions           = $blast.exclusions
+                projectedResources   = @($plan.scope.projectedResources)
+            }
+            validation             = [ordered]@{
+                status = $prepared.validationStatus
+                errors = @($prepared.validationErrors)
+            }
+            permissionFix          = $prepared.permissionFix
+        }
+        Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
+        $previewCommand = if ($prepared.permissionFix.applicable) {
+            'az chaos scenario config fix-permissions --what-if'
+        } else {
+            'az chaos scenario config validate'
+        }
+        Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'approval' -Command $previewCommand `
+            -Arguments @($approvalConfigurationName) -ExitCode 0 -Note "RBAC preview $($prepared.permissionFix.digest)" | Out-Null
+    } finally {
+        if ($configurationCreated) {
+            Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $approvalConfigurationName
+        }
+    }
+
+    $permissionText = if (-not $approvalPreview.permissionFix.applicable) {
+        'No RBAC changes are required: the temporary configuration validated successfully.'
+    } else {
+        "Applying these assignments requires Microsoft.Authorization/roleAssignments/write on every listed scope.`n`n" +
+            (ConvertTo-ChaosCanonicalJson -InputObject $approvalPreview.permissionFix.details)
+    }
+    Write-ChaosStudyCard -Title 'Frozen plan requiring human approval' -Body (
+        ConvertTo-ChaosCanonicalJson -InputObject $plan
+    )
+    Write-ChaosStudyCard -Title 'Frozen blast radius requiring human approval' -Body (
+        ConvertTo-ChaosCanonicalJson -InputObject $approvalPreview.blastRadius
+    )
+    Write-ChaosStudyCard -Title 'Exact RBAC changes requiring human approval' -Body $permissionText
+
+    if (-not $approvalPreview.approvalReady) {
+        Write-ChaosStudyFailure -Title 'Configuration is not ready for approval' -Message @"
+Validation reported '$($approvalPreview.validation.status)', and Chaos Studio
+did not return a complete, exact list of applicable RBAC changes. The validation
+errors and permission preview are stored in approval-preview.v1.json. No role
+assignment or scenario run was created.
+"@ -Remediation 'Correct the validation errors, re-scope if needed, and prepare approval again.'
+        exit (Get-ChaosStudyExitCode -Name 'ValidationFailed')
+    }
+
+    $phrase = Get-ChaosConsentPhrase -Plan $plan
+    Write-ChaosStudyCard -Title 'Fresh human approval required' -Body @"
+The temporary configuration has been deleted. No role assignment was created and
+no scenario was started.
+
+A human must now review all exact previews above and type this plan-hash-bound
+phrase in a new invocation. An agent must not copy or self-confirm it:
+
+  $phrase
+
+Then run:
+
+  chaos-study-run -StudyId $($study.studyId) -DryRun:`$false -Consent '<human-typed phrase>'
+"@
+    exit (Get-ChaosStudyExitCode -Name 'Success')
+}
 
 # -- Dry run ---------------------------------------------------------------
 
 if ($DryRun) {
-    $phrase = Get-ChaosConsentPhrase -Plan $plan
     $previewWindow = New-ChaosWindow -Name 'preview' -Start (ConvertTo-ChaosUtcIso -Instant (Get-Date).ToUniversalTime().AddMinutes(-1)) -End (Get-ChaosUtcNow)
     $preview = Invoke-ChaosSignalCollection -Plan $plan -Window $previewWindow -Sources $sources -DryRun
-
-    $blast = Get-ChaosBlastRadiusArgument -Plan $plan
-    $configPreview = [ordered]@{
-        workspace     = $plan.workspace.name
-        resourceGroup = $plan.workspace.resourceGroup
-        scenario      = $plan.scenario.name
-        configuration = $configurationName
-        parameters    = @(Get-ChaosScenarioParameterList -Plan $plan)
-        filters       = $blast.filters
-        exclusions    = $blast.exclusions
-    }
 
     Write-Card -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
 Nothing has been injected. This is what would happen.
@@ -148,15 +260,17 @@ $($plan.question.hypothesis)
 
     if (@($plan.safety.abortConditions).Count -gt 0) {
         Write-Card -Title 'Abort if any of these happen' -Status 'warning' -Body (
-            @($plan.safety.abortConditions | ForEach-Object { "  - $_" }) -join "`n"
+            @($plan.safety.abortConditions | ForEach-Object { "  - $(Get-ChaosAbortConditionDescription -Condition $_)" }) -join "`n"
         )
     }
 
-    Write-Card -Title 'To run it' -Status 'info' -Body @"
-Injection requires a consent phrase that names the blast radius and pins this
-exact plan. Type it exactly:
-
-  $phrase
+    $nextStep = if ($liveDiscoveryVerified) {
+        "Prepare the exact RBAC preview and fresh human approval boundary:`n`n  chaos-study-run -StudyId $($study.studyId) -PrepareApproval"
+    } else {
+        'This offline/unverified plan cannot arm. Re-scope without -SkipDiscovery to create a fresh live-discovered plan.'
+    }
+    Write-Card -Title 'Before an armed run' -Status 'info' -Body @"
+$nextStep
 "@ -JsonPreview ($configPreview | ConvertTo-Json -Depth 20)
 
     Write-ChaosStudyNote -Message 'Dry run complete. Nothing was changed.'
@@ -164,6 +278,24 @@ exact plan. Type it exactly:
 }
 
 # -- Armed path ------------------------------------------------------------
+
+if (-not $liveDiscoveryVerified) {
+    Write-ChaosStudyFailure -Title 'Offline plan cannot arm' -Message @"
+This plan does not contain a complete live discovery result. -SkipDiscovery is
+for offline planning only; neither -Force nor a consent string can arm it.
+"@ -Remediation 'Re-run chaos-study-scope without -SkipDiscovery, review the new frozen plan, then run -PrepareApproval.'
+    exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
+}
+
+$approvalPreview = Read-ChaosJsonFile -Path (Join-Path $studyPath 'approval-preview.v1.json')
+if (-not (Test-ChaosApprovalPreviewReady -Plan $plan -Preview $approvalPreview)) {
+    Write-ChaosStudyFailure -Title 'Fresh approval preview required' -Message @"
+No unconsumed approval preview matching this frozen plan is available. Armed
+execution is split deliberately: first display the frozen resource list and
+Chaos Studio's exact RBAC what-if result, then obtain fresh human approval.
+"@ -Remediation "Run chaos-study-run -StudyId $($study.studyId) -PrepareApproval."
+    exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+}
 
 Assert-ChaosConsent -Plan $plan -Consent $Consent | Out-Null
 
@@ -189,6 +321,9 @@ report claiming resilience that was never tested.
     exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
 }
 
+$approvalPreview.consumedAt = Get-ChaosUtcNow
+Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
+
 if (Get-Command Ensure-AzLogin -ErrorAction SilentlyContinue) { Ensure-AzLogin | Out-Null }
 
 $startedAt = Get-ChaosUtcNow
@@ -202,11 +337,17 @@ $preWindow = New-ChaosWindow -Name 'pre' -Start (ConvertTo-ChaosUtcIso -Instant 
 
 $injectStart = $null
 $injectEnd = $null
+$injectStartInstant = $null
+$injectEndInstant = $null
+$duringWindow = $null
 $configurationCreated = $false
 $runId = $null
 $runObservation = $null
 $validationStatus = $null
 $permissionFix = $null
+$abortRecord = $null
+$abortChecks = @()
+$cancellation = $null
 $outcome = 'unknown'
 $failureMessage = $null
 # Seeded because the run record is written even when the try block fails part
@@ -227,7 +368,8 @@ try {
         -Arguments @($configurationName) -ExitCode 0 | Out-Null
 
     Write-ChaosStudyNote -Message 'Validating the configuration against the live scope.'
-    $validated = Resolve-ChaosConfigurationValidation -Plan $plan -ConfigurationName $configurationName
+    $validated = Resolve-ChaosConfigurationValidation -Plan $plan -ConfigurationName $configurationName `
+        -ApprovedPermissionDigest ([string]$approvalPreview.permissionFix.digest)
     $validation = $validated.validation
     $validationStatus = $validated.status
     $permissionFix = $validated.permissionFix
@@ -244,25 +386,58 @@ try {
     Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/pre/signals.json' -Content $preEvidence | Out-Null
 
     Write-ChaosStudyNote -Message 'Starting the scenario run.'
-    $injectStart = Get-ChaosUtcNow
+    $injectStartInstant = [datetime]::UtcNow
+    $injectStart = ConvertTo-ChaosUtcIso -Instant $injectStartInstant
     $started = Start-ChaosStudyScenarioRun -Plan $plan -ConfigurationName $configurationName -Validation $validation
     $runId = $started.runId
     Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'run' -Command 'az chaos scenario run start' `
         -Arguments @($configurationName, $runId) -ExitCode 0 | Out-Null
 
-    $waited = Wait-ChaosScenarioRunWindow -Plan $plan -RunId $runId -Minutes $plan.windows.injectMinutes -PollSeconds $PollSeconds `
-        -OnPoll { param($status) Write-ChaosStudyNote -Message "Scenario run $runId is $status." }
+    $abortState = [ordered]@{ missingSince = [ordered]@{} }
+    $waited = Wait-ChaosScenarioRunWindow -Plan $plan -RunId $runId -Minutes $plan.windows.injectMinutes `
+        -InjectionStartedAt $injectStartInstant -PollSeconds $PollSeconds `
+        -OnPoll { param($status) Write-ChaosStudyNote -Message "Scenario run $runId is $status." } `
+        -OnAbortCheck {
+            param($window)
+            $liveSignals = Invoke-ChaosSignalCollection -Plan $plan -Window $window -Sources $sources
+            Invoke-ChaosAbortEvaluation -Plan $plan -Signals $liveSignals -Window $window `
+                -InjectionStartedAt $injectStartInstant -State $abortState
+        }
 
-    $injectEnd = Get-ChaosUtcNow
-    $runObservation = Get-ChaosScenarioRunObservation -Run $waited.run
-    $outcome = if ($runObservation.status) { $runObservation.status } else { 'unknown' }
+    $injectEndInstant = [datetime]::UtcNow
+    $injectEnd = ConvertTo-ChaosUtcIso -Instant $injectEndInstant
+    $duringWindow = New-ChaosWindow -Name 'during' -Start $injectStartInstant -End $injectEndInstant
+    $abortChecks = @($waited.abortChecks)
+    if ($abortChecks.Count -gt 0) {
+        Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/abort-checks.json' -Content $abortChecks | Out-Null
+    }
+
+    if ($null -ne $waited.abort) {
+        Write-ChaosStudyNote -Message "Automatic abort triggered: $($waited.abort.reason)" -Level 'warn'
+        $cancellation = Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId
+        $abortRecord = [ordered]@{
+            triggered    = $true
+            conditionId  = $waited.abort.conditionId
+            kind         = $waited.abort.kind
+            source       = $waited.abort.source
+            reason       = $waited.abort.reason
+            observedAt   = $waited.abort.observedAt
+            cancellation = $cancellation
+            evidence     = 'evidence/during/abort-checks.json'
+        }
+        $afterCancellation = Get-ChaosStudyScenarioRun -Plan $plan -RunId $runId
+        $runObservation = Get-ChaosScenarioRunObservation -Run $(if ($null -ne $afterCancellation) { $afterCancellation } else { $waited.run })
+        $outcome = 'Aborted'
+    } else {
+        $runObservation = Get-ChaosScenarioRunObservation -Run $waited.run
+        $outcome = if ($runObservation.status) { $runObservation.status } else { 'unknown' }
+    }
 
     if ($waited.endedEarly -and $outcome -ne 'Succeeded') {
         Write-ChaosStudyNote -Message "The scenario run reached '$outcome' before the injection window elapsed." -Level 'warn'
     }
 
     Write-ChaosStudyNote -Message 'Collecting evidence from the injection window.'
-    $duringWindow = New-ChaosWindow -Name 'during' -Start $injectStart -End $injectEnd
     $duringEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $duringWindow -Sources $sources
     Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/signals.json' -Content $duringEvidence | Out-Null
 } catch {
@@ -270,19 +445,28 @@ try {
     $outcome = 'Failed'
     Write-ChaosStudyNote -Message "Injection failed: $failureMessage" -Level 'warn'
 } finally {
-    if ($runId) {
+    if ($runId -and $null -eq $cancellation) {
         Write-ChaosStudyNote -Message "Cancelling scenario run $runId."
-        Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId
+        $cancellation = Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId
     }
     if ($configurationCreated -and -not $KeepConfiguration) {
         Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName $configurationName
     }
 }
 
-if (-not $injectStart) { $injectStart = $startedAt }
-if (-not $injectEnd) { $injectEnd = Get-ChaosUtcNow }
+if ($null -eq $injectStartInstant) {
+    $injectStartInstant = ConvertFrom-ChaosUtcIso -Text $startedAt
+    $injectStart = ConvertTo-ChaosUtcIso -Instant $injectStartInstant
+}
+if ($null -eq $injectEndInstant) {
+    $injectEndInstant = [datetime]::UtcNow
+    if ($injectEndInstant -le $injectStartInstant) { $injectEndInstant = $injectStartInstant.AddTicks(1) }
+    $injectEnd = ConvertTo-ChaosUtcIso -Instant $injectEndInstant
+}
+if ($null -eq $duringWindow) {
+    $duringWindow = New-ChaosWindow -Name 'during' -Start $injectStartInstant -End $injectEndInstant
+}
 if (-not (Test-Path -LiteralPath (Join-Path $studyPath 'evidence' 'during' 'signals.json'))) {
-    $duringWindow = New-ChaosWindow -Name 'during' -Start $injectStart -End $injectEnd
     $duringEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $duringWindow -Sources $sources -DryRun
     Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/signals.json' -Content $duringEvidence | Out-Null
 }
@@ -299,7 +483,7 @@ $allSignals = @($preEvidence) + @($duringEvidence) + @($postEvidence)
 $coverage = Test-ChaosSignalCoverage -Signals $allSignals
 
 $runRecord = [ordered]@{
-    recordVersion = 'run-record.v2'
+    recordVersion = 'run-record.v1'
     studyId       = $study.studyId
     scopeHash     = $study.scopeHash
     planHash      = $plan.frozenConfigHash
@@ -323,11 +507,13 @@ $runRecord = [ordered]@{
         runId       = $runId
         outcome     = $outcome
         observation = $runObservation
+        abort       = $abortRecord
+        cancellation = $cancellation
         failure     = $failureMessage
     }
     windows       = [ordered]@{
         pre    = $preWindow
-        during = New-ChaosWindow -Name 'during' -Start $injectStart -End $injectEnd
+        during = $duringWindow
         post   = $postWindow
     }
     evidence      = [ordered]@{

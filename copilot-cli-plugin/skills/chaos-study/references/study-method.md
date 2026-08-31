@@ -36,11 +36,12 @@ and no fallback to one.
 Decide *what system*, *what action*, and *what would count as a failure* —
 before anything runs.
 
-The action is not chosen from a list this suite carries. It is chosen from the
+The action is not chosen from a list this suite carries. An armable plan uses the
 list Chaos Studio returns for the workspace's region, live, at scope time. That
-response is authoritative for the action's identity, its type, what it applies
-to and its parameter schema. There is no bundled catalogue and no offline
-fallback: if the platform cannot be asked, scoping stops at exit code 16.
+response is authoritative for the action's identity, type, applicability, and
+parameter schema. `-SkipDiscovery` may write an explicitly unverified offline
+planning draft, but that draft cannot prepare approval or arm; a fresh
+live-discovered plan is required.
 
 What is *in* scope is read the same way. The resources a run can touch are the
 ones the workspace discovered, filtered by the blast radius the plan freezes.
@@ -66,10 +67,9 @@ Two independent checks:
 - **Executable** — is there anything in scope for this action to act on, does
   what the action applies to intersect the discovered resource types, and do the
   supplied parameters satisfy the schema the service published?
-- **Observable** — will we be able to tell what happened? If no signal source
-  covers the impact, the study can still run, but it will produce a finding
-  with `confidence: low` and a mandatory limitation. We say so *before*
-  running, not after.
+- **Observable** — will we be able to tell what happened and enforce the frozen
+  abort contract? At least one signal source must cover the impact and the
+  steady-state predicate. Without it readiness fails before planning.
 
 Readiness failure is exit code 10. It is not a warning.
 
@@ -82,9 +82,11 @@ Rules that do not bend:
 - **Validation is a gate.** The scenario configuration is created and validated,
   and execution is refused unless the service reports `Succeeded` (exit 17). A
   configuration that only probably works is not executed.
-- **Dry run is the default.** Execution requires an explicit `-DryRun:$false`
-  *and* a typed consent string bound to the frozen config hash. If the plan
-  changed after consent was given, the consent is void (exit 12).
+- **Dry run is the default.** `-PrepareApproval` first displays the exact frozen
+  resource list and exact RBAC what-if response from a temporary configuration,
+  then deletes it. The agent stops. Execution requires a fresh, human-typed
+  consent string in a new invocation, bound to the frozen config hash. If the
+  plan or RBAC preview changed, the consent is void.
 - **Non-interactive escape hatches do not apply.** The study suite ignores
   `STARTCHAOS_NONINTERACTIVE`. A human types the consent string or nothing runs.
 - **The blast radius is in the plan, not in the operator's head.** The scope
@@ -92,9 +94,10 @@ Rules that do not bend:
   time. An empty blast-radius member is omitted rather than sent as an empty
   array, because `{"locations":[]}` selects nothing and would turn a real study
   into a no-op that still reports success.
-- **Abort is not cleanup.** Abort conditions are evaluated during the run; if
-  one trips, the run is cancelled and the study records that it was aborted,
-  which is itself a finding. Cleanup of the configuration happens regardless.
+- **Abort is not cleanup.** The frozen predicate and telemetry-availability
+  conditions are evaluated from live evidence during the run. A trip calls the
+  supported scenario-run cancellation path and records the checks, cause, time,
+  and cancellation response. Cleanup of the configuration happens regardless.
 
 ### 4. Observe
 

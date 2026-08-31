@@ -22,10 +22,11 @@ is not a study — there is no way for it to fail, so it cannot teach you anythi
 **A study is a falsifiable claim.** Every study needs a steady-state predicate
 that is measurable beforehand and could plausibly break during the run.
 
-**The platform decides what is possible, not this plugin.** The available
-actions are read live from Chaos Studio for the workspace's region, every time.
-This suite ships **no** action catalogue, and there is no offline fallback: if
-the service cannot be asked, scoping stops with exit `16` rather than guessing.
+**The platform decides what is possible, not this plugin.** Every armable plan
+reads the available actions live from Chaos Studio for the workspace's region.
+This suite ships **no** action catalogue. `-SkipDiscovery` can capture an
+offline, explicitly unverified planning draft, but that draft cannot prepare
+approval or arm; a fresh live-discovered plan is required first.
 
 **What is in scope is read from the service.** The resources a run will touch
 come from the workspace's discovered resources, not from an assertion in the
@@ -36,9 +37,12 @@ is refused before anything runs.
 a signal was not collected, the report says *not measured* — never `0`, never a
 plausible-looking guess. Absent evidence is reported as absent.
 
-**Nothing runs without consent.** `-DryRun` defaults to `$true`. Arming a study
-takes both `-DryRun:$false` and typing back the exact phrase the plan prints.
-There is no flag that skips this.
+**Nothing runs without fresh human consent.** `-DryRun` defaults to `$true`.
+Next, `chaos-study-run -PrepareApproval` creates and validates a temporary
+configuration, prints the exact frozen resource list and the exact redacted RBAC
+what-if response, and deletes the configuration. The agent must stop. Only a
+human may type the printed, plan-hash-bound phrase in a new invocation with
+`-DryRun:$false`; an agent may not copy or self-confirm it.
 
 **Blast radius is bounded before it is armed.** Workspace, scope, filters,
 exclusions, action, parameters and duration are frozen into the plan and hashed.
@@ -63,6 +67,16 @@ This is a suite, not a monolith. Use the front door unless you need one phase.
 
 Each phase persists its own output, so a chain that fails partway can be resumed
 from that phase — you never have to restart from scratch.
+
+## Portable shell-agent contract
+
+The method is host-neutral. Any shell-capable agent may use it if the host can
+run PowerShell 7.4+ and Azure CLI 2.75+, preserve `CHAOS_STUDY_ROOT` and the
+study id across turns, display cards and stderr without suppression, propagate
+the documented exit codes, and halt for the human-origin approval boundary.
+Copilot CLI supplies plugin installation and discovery only. SRE Agent is the
+strongest intended integrated target, but this PR has not yet validated its
+skill-loading or invocation path.
 
 ## Usage
 
@@ -93,14 +107,25 @@ its parameter schema — all as the service reported them.
 Read the preview. It shows what is in scope after filters and exclusions, the
 windows, and the configuration that would be created.
 
-**3. Arm it.** Only after the preview matches your intent:
+**3. Prepare the approval boundary.** This creates and deletes a temporary
+configuration but does not grant roles or start a scenario:
 
 ```powershell
-./scripts/Invoke-ChaosStudy.ps1 ... -DryRun:$false -Consent '<phrase from the preview>'
+../chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1 `
+    -StudyId <studyId> -PrepareApproval
 ```
 
-The run creates and validates the scenario configuration, collects baseline,
-executes, collects during, waits out recovery, then reports and seals the study.
+**4. Stop for the human.** Show the exact frozen blast radius and exact RBAC
+preview. A human—not the agent—types the printed phrase in a new invocation:
+
+```powershell
+../chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1 `
+    -StudyId <studyId> -DryRun:$false -Consent '<human-typed phrase>'
+```
+
+The run revalidates that the RBAC preview has not changed, applies only those
+approved grants, collects baseline, executes with live abort evaluation,
+collects during and recovery evidence, then can be reported and sealed.
 
 ## Reading the verdict
 
@@ -168,10 +193,11 @@ available from the actions endpoint yet. When they ship, they appear in
 
 - Chaos Studio **V2** only: workspaces are the lifecycle root and resource
   selection flows through workspace scopes. There is no V1 path and no fallback.
-- Core is `az` / Azure Resource Manager. There is no SRE Agent dependency and no
-  required MCP dependency.
+- Core is `pwsh`, `az`, and Azure Resource Manager. There is no required SRE
+  Agent or MCP dependency.
 - Studies persist under a dated store, so later chats can list, compare, and
   re-run them. Sealed studies are immutable — re-testing scopes a **new** study
   rather than overwriting the record.
-- Parameterised scenarios (`-Parameters`) are planned via `chaos-study-scope`
-  directly; hashtables cannot cross the chained entry point.
+- Scope may create a workspace only with explicit `-CreateWorkspace`; approval
+  preparation creates and deletes a temporary scenario configuration. The
+  scenario run and any approved RBAC grants occur only in the armed run phase.

@@ -8,6 +8,11 @@ description: "Interpret the evidence from an executed Chaos study and render a s
 The run produced numbers. This skill decides what they mean, and — just as
 importantly — what they do **not** mean.
 
+Any shell-capable agent may invoke this phase if it preserves the study store and
+study id from prior phases and propagates exit codes. It calls no Azure API.
+Copilot CLI is packaging only; SRE Agent consumption is intended but not yet
+validated by this PR.
+
 ## Principles
 
 **Interpretation is pure.** This skill reads only what the run wrote. It calls no
@@ -57,7 +62,7 @@ renders beside it as `report-<studyId>.html` and exits `0`.
 | --- | --- |
 | **Steady state breached** | any `critical` finding — breached and did not recover |
 | **Degraded but recovered** | breached during injection, recovered in the post window |
-| **Inconclusive** | the action could not be proven to have landed |
+| **Inconclusive** | the action could not be proven to have landed, recovery was not measured, or telemetry loss triggered an abort |
 | **Steady state held** | the action landed and the objective survived |
 
 ## Report sections

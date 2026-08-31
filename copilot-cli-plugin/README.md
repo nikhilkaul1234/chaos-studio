@@ -1,8 +1,9 @@
 # startchaos — Chaos Studio v2 Workspace Plugin
 
-A GitHub Copilot CLI plugin that guides Azure customers through the end-to-end
-**Chaos Studio v2 Workspace** experience: provision a workspace, configure
-scenarios, and execute chaos experiments — all from a single conversation.
+A portable shell-agent workflow for the end-to-end **Chaos Studio v2 Workspace**
+experience, packaged as a GitHub Copilot CLI plugin. It can provision a
+workspace, configure scenarios, execute chaos experiments, and run auditable
+reliability studies from any agent host that can honor the shell contract below.
 
 ## Prerequisites
 
@@ -10,10 +11,15 @@ scenarios, and execute chaos experiments — all from a single conversation.
 |---|---|---|
 | **PowerShell** (`pwsh`) | 7.4+ | Cross-platform; `winget install Microsoft.PowerShell` |
 | **Azure CLI** (`az`) | 2.75+ | `winget install Microsoft.AzureCLI`. The `chaos` extension is auto-installed on first use. |
-| **GitHub Copilot CLI** | latest | Must support plugin marketplaces |
+| **GitHub Copilot CLI** | latest | Required only for Copilot CLI plugin installation |
 | `jq` *(optional)* | any | Fallback to `ConvertFrom-Json` if absent |
 
-## Installation
+The Azure identity must be able to read the selected workspace and scopes.
+Approval preparation can also surface role assignments that require
+`Microsoft.Authorization/roleAssignments/write` (normally Owner or User Access
+Administrator) to apply during the subsequently approved run.
+
+## Copilot CLI installation
 
 **Quickest — install directly from this repo:**
 
@@ -40,15 +46,24 @@ plugins:
     marketplace: chaos-studio
 ```
 
-## Two ways to use this plugin
+## Execution surfaces
 
-| Surface | Folder | For |
+| Surface | Folder | Contract |
 |---|---|---|
-| **Skill** (interactive) | `skills/start-chaos` | Humans driving Chaos Studio from a conversation |
-| **MCP server** | `mcp/` | Autonomous agents that need typed Chaos Studio tools |
+| **Portable shell-agent skills** | `skills/` | A host loads `SKILL.md`, invokes the referenced `pwsh` entry points, preserves the study store across turns, propagates exit codes, and stops for fresh human approval |
+| **Copilot CLI plugin** | `plugin.json` | Host-specific packaging and discovery for the same skills |
+| **MCP server** | `mcp/` | Typed Chaos Studio tools for agent hosts that support MCP |
 
 Both target `Microsoft.Chaos` `2026-05-01-preview` and use the local `az login`
 session for auth.
+
+The skill method does not require Copilot CLI or MCP. A non-Copilot host may
+invoke the scripts directly, but it must keep `CHAOS_STUDY_ROOT` durable, retain
+the study id between phases, show output without suppressing safety cards, and
+return non-zero phase exit codes to the caller. The strongest intended integrated
+consumer is SRE Agent because it can combine service context with this method,
+but SRE Agent installation and invocation have not yet been validated for this
+PR. Do not describe that path as supported until that validation is complete.
 
 ## Skills
 
@@ -59,6 +74,11 @@ session for auth.
 | `setup-scenario` | Discover, configure, validate scenarios |
 | `run-scenario` | Execute and stream experiment results |
 | `chaos-impact` | Analyze run impact — correlate Azure Monitor signals to targeted resources |
+| `chaos-study` | Portable reliability-study front door and phase handoff |
+| `chaos-study-scope` | Live scope/action discovery and frozen plan |
+| `chaos-study-run` | Exact approval preview, human consent, execution, live abort, and evidence |
+| `chaos-study-report` | Deterministic findings, report, and seal |
+| `chaos-study-history` | List, inspect, compare, and reproduce frozen studies |
 
 ## MCP tools (for agents)
 
@@ -114,6 +134,28 @@ instructions (PyPI + Smithery).
 #   Phase 2 — Set up a scenario configuration
 #   Phase 3 — Run the chaos experiment
 ```
+
+For a reliability study, load `chaos-study/SKILL.md` (or invoke its script
+directly). The safety handoff is deliberately multi-step:
+
+```powershell
+# 1. Plan and preview. Dry-run is the default.
+./skills/chaos-study/scripts/Invoke-ChaosStudy.ps1 <scope arguments>
+
+# 2. Create/validate a temporary configuration, display the exact frozen
+#    resource list and exact RBAC what-if response, then delete it.
+./skills/chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1 `
+    -StudyId <studyId> -PrepareApproval
+
+# 3. Stop. A human reviews both previews and types the printed phrase in a new
+#    invocation. An agent may not copy or self-confirm it.
+./skills/chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1 `
+    -StudyId <studyId> -DryRun:$false -Consent '<human-typed phrase>'
+```
+
+`-SkipDiscovery` is available for offline planning only. Its unverified plan can
+be inspected, stored, and shared, but cannot prepare approval or arm. Re-scope
+without `-SkipDiscovery` to create a fresh live-discovered plan.
 
 ## Impact Report
 

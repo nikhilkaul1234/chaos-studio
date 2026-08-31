@@ -19,6 +19,7 @@
         <scopeHash>/<studyId>/
             manifest.json          identity, pins, hashes  (written at seal)
             study-plan.v1.json     what we intended to test
+            approval-preview.v1.json  exact one-time blast-radius/RBAC preview
             run-record.v1.json     what actually happened
             findings.v1.json       what it means
             report.html            the artifact a human reads
@@ -179,7 +180,7 @@ function Resolve-ChaosStudyPath {
         [Parameter(Mandatory)][string]$StudyRoot,
         [Parameter(Mandatory)][string]$ScopeHash,
         [Parameter(Mandatory)][string]$StudyId,
-        [ValidateSet('root', 'manifest', 'plan', 'runRecord', 'findings', 'report', 'commands', 'sealed', 'evidencePre', 'evidenceDuring', 'evidencePost')]
+        [ValidateSet('root', 'manifest', 'plan', 'approvalPreview', 'runRecord', 'findings', 'report', 'commands', 'sealed', 'evidencePre', 'evidenceDuring', 'evidencePost')]
         [string]$Artifact = 'root'
     )
     $dir = Join-Path (Join-Path $StudyRoot $ScopeHash) $StudyId
@@ -187,6 +188,7 @@ function Resolve-ChaosStudyPath {
         'root'           { return $dir }
         'manifest'       { return Join-Path $dir 'manifest.json' }
         'plan'           { return Join-Path $dir 'study-plan.v1.json' }
+        'approvalPreview' { return Join-Path $dir 'approval-preview.v1.json' }
         'runRecord'      { return Join-Path $dir 'run-record.v1.json' }
         'findings'       { return Join-Path $dir 'findings.v1.json' }
         'report'         { return Join-Path $dir 'report.html' }
@@ -363,6 +365,36 @@ function Get-ChaosStudyFileHashes {
     return $hashes
 }
 
+function New-ChaosStudyManifest {
+    <#
+    .SYNOPSIS
+        Build the manifest payload without writing or sealing the study.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$StudyPath,
+        [Parameter(Mandatory)][hashtable]$Identity,
+        [AllowNull()][object]$Summary = $null,
+        [string]$SealedAt = (Get-ChaosUtcNow),
+        [switch]$ExcludeReport
+    )
+
+    $hashes = Get-ChaosStudyFileHashes -StudyPath $StudyPath
+    if ($ExcludeReport -and $hashes.Contains('report.html')) {
+        $hashes.Remove('report.html')
+    }
+    return [ordered]@{
+        manifestVersion = $ChaosStudyManifestVersion
+        studyId         = Split-Path -Leaf $StudyPath
+        scopeHash       = Split-Path -Leaf (Split-Path -Parent $StudyPath)
+        sealedAt        = $SealedAt
+        identity        = $Identity
+        summary         = $Summary
+        apiVersions     = if (Get-Command Get-ChaosApiVersionTable -ErrorAction SilentlyContinue) { Get-ChaosApiVersionTable } else { $null }
+        files           = $hashes
+        contentHash     = Get-ChaosSha256 -Text (ConvertTo-ChaosCanonicalJson -InputObject $hashes)
+    }
+}
+
 function Complete-ChaosStudy {
     <#
     .SYNOPSIS
@@ -377,6 +409,7 @@ function Complete-ChaosStudy {
         [Parameter(Mandatory)][string]$StudyPath,
         [Parameter(Mandatory)][hashtable]$Identity,
         [AllowNull()][object]$Summary = $null,
+        [string]$SealedAt,
         [switch]$AllowMissingReport
     )
     if (Test-ChaosStudySealed -StudyPath $StudyPath) {
@@ -386,18 +419,13 @@ function Complete-ChaosStudy {
         throw "Cannot seal '$StudyPath': report.html has not been rendered yet."
     }
 
-    $hashes = Get-ChaosStudyFileHashes -StudyPath $StudyPath
-    $manifest = [ordered]@{
-        manifestVersion = $ChaosStudyManifestVersion
-        studyId         = Split-Path -Leaf $StudyPath
-        scopeHash       = Split-Path -Leaf (Split-Path -Parent $StudyPath)
-        sealedAt        = Get-ChaosUtcNow
-        identity        = $Identity
-        summary         = $Summary
-        apiVersions     = if (Get-Command Get-ChaosApiVersionTable -ErrorAction SilentlyContinue) { Get-ChaosApiVersionTable } else { $null }
-        files           = $hashes
-        contentHash     = Get-ChaosSha256 -Text (ConvertTo-ChaosCanonicalJson -InputObject $hashes)
+    $manifestArgs = @{
+        StudyPath = $StudyPath
+        Identity  = $Identity
+        Summary   = $Summary
     }
+    if ($SealedAt) { $manifestArgs['SealedAt'] = $SealedAt }
+    $manifest = New-ChaosStudyManifest @manifestArgs
 
     Write-ChaosJsonFile -Path (Join-Path $StudyPath 'manifest.json') -InputObject $manifest | Out-Null
     Write-ChaosTextFile -Path (Join-Path $StudyPath 'SEALED') -Content ((Get-ChaosUtcNow) + "`n") | Out-Null

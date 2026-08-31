@@ -77,6 +77,45 @@ execution stops here.
     exit (Get-ChaosStudyExitCode -Name 'ConfigurationDrift')
 }
 
+function Test-ChaosPlanLiveDiscovery {
+    <#
+    .SYNOPSIS
+        True only when the plan has a complete, live-discovered execution scope.
+    #>
+    param([Parameter(Mandatory)][object]$Plan)
+
+    return (
+        [string]$Plan.scenario.source -eq 'live-recommendation' -and
+        [string]$Plan.action.source -eq 'live-discovery' -and
+        -not [string]::IsNullOrWhiteSpace([string]$Plan.discovery.performedAt) -and
+        $null -ne $Plan.scope.projectedResourceCount
+    )
+}
+
+function Test-ChaosPlanWindows {
+    param([Parameter(Mandatory)][object]$Plan)
+
+    return (
+        [int]$Plan.windows.baselineMinutes -ge 1 -and
+        [int]$Plan.windows.injectMinutes -ge 1 -and
+        [int]$Plan.windows.recoveryMinutes -ge 1
+    )
+}
+
+function Test-ChaosApprovalPreviewReady {
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [AllowNull()][object]$Preview
+    )
+
+    if ($null -eq $Preview) { return $false }
+    return (
+        [string]$Preview.planHash -ceq [string]$Plan.frozenConfigHash -and
+        $Preview.approvalReady -eq $true -and
+        [string]::IsNullOrWhiteSpace([string]$Preview.consumedAt)
+    )
+}
+
 # -- Consent ---------------------------------------------------------------
 
 function Get-ChaosConsentPhrase {
@@ -265,6 +304,7 @@ function New-ChaosStudyConfiguration {
         'scenario', 'config', 'create',
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
     )
@@ -305,6 +345,7 @@ function Remove-ChaosStudyConfiguration {
         'scenario', 'config', 'delete',
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name,
         '--yes'
@@ -331,6 +372,7 @@ function Get-ChaosConfigurationValidation {
     $scoping = @(
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
     )
@@ -488,6 +530,82 @@ function Format-ChaosPermissionFixSummary {
     return ($lines -join "`n")
 }
 
+function Get-ChaosPermissionFixApproval {
+    <#
+    .SYNOPSIS
+        Return the exact redacted service preview and its deterministic digest.
+    #>
+    param([AllowNull()][object]$FixResult)
+
+    $container = $FixResult
+    if ($null -ne $FixResult -and $FixResult.PSObject.Properties.Name -contains 'properties') {
+        $container = $FixResult.properties
+    }
+    $assignments = @()
+    if ($null -ne $container -and $container.PSObject.Properties.Name -contains 'roleAssignments') {
+        foreach ($assignment in @($container.roleAssignments)) {
+            if ($null -eq $assignment) { continue }
+            $assignments += [pscustomobject][ordered]@{
+                targetResourceId  = [string]$assignment.targetResourceId
+                principalId       = [string]$assignment.principalId
+                roleDefinitionId  = [string]$assignment.roleDefinitionId
+                roleDefinitionName = [string]$assignment.roleDefinitionName
+                scope             = [string]$assignment.scope
+                status            = [string]$assignment.status
+            }
+        }
+    }
+    $details = @($assignments | Sort-Object -Property targetResourceId, scope, roleDefinitionId, principalId)
+    return [pscustomobject]@{
+        details = $details
+        digest  = Get-ChaosDigest -InputObject $details
+    }
+}
+
+function Get-ChaosStudyApprovalPreview {
+    <#
+    .SYNOPSIS
+        Validate a temporary configuration and freeze the exact RBAC preview.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$ConfigurationName
+    )
+
+    $validation = Get-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName
+    $status = Get-ChaosValidationStatus -Validation $validation
+    $permissionPreview = $null
+    if ($status -ne 'Succeeded') {
+        $permissionPreview = Repair-ChaosConfigurationPermission -Plan $Plan -ConfigurationName $ConfigurationName -WhatIf
+    }
+    $approval = Get-ChaosPermissionFixApproval -FixResult $permissionPreview
+    $applicable = Test-ChaosPermissionFixApplicable -FixResult $permissionPreview
+    $summary = Get-ChaosPermissionFixSummary -FixResult $permissionPreview
+    $reportedCount = 0
+    $hasReportedCount = (
+        $null -ne $summary -and
+        $null -ne $summary.totalRequired -and
+        [int]::TryParse([string]$summary.totalRequired, [ref]$reportedCount)
+    )
+    $exact = (
+        -not $applicable -or
+        ($hasReportedCount -and $reportedCount -gt 0 -and @($approval.details).Count -eq $reportedCount)
+    )
+
+    return [pscustomobject]@{
+        validationStatus = $status
+        validationErrors = @(Get-ChaosValidationError -Validation $validation)
+        permissionFix    = [ordered]@{
+            applicable = [bool]$applicable
+            exact      = [bool]$exact
+            summary    = $summary
+            details    = $approval.details
+            digest     = $approval.digest
+        }
+        approvalReady   = ($status -eq 'Succeeded' -or ($applicable -and $exact))
+    }
+}
+
 function Resolve-ChaosConfigurationValidation {
     <#
     .SYNOPSIS
@@ -519,13 +637,22 @@ function Resolve-ChaosConfigurationValidation {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][object]$Plan,
-        [Parameter(Mandatory)][string]$ConfigurationName
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [Parameter(Mandatory)][string]$ApprovedPermissionDigest
     )
 
     $validation = Get-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName
     $status = Get-ChaosValidationStatus -Validation $validation
 
     if ($status -eq 'Succeeded') {
+        $currentApproval = Get-ChaosPermissionFixApproval -FixResult $null
+        if ($currentApproval.digest -cne $ApprovedPermissionDigest) {
+            Write-ChaosStudyFailure -Title 'Permission preview changed' -Message @"
+The approved preview included RBAC changes, but this configuration now validates
+without them. No grants were applied and no scenario was started.
+"@ -Remediation 'Run chaos-study-run -PrepareApproval again, review the current exact preview, then obtain fresh human approval.'
+            exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+        }
         return [pscustomobject]@{
             validation    = $validation
             status        = $status
@@ -543,7 +670,19 @@ function Resolve-ChaosConfigurationValidation {
 
     $preview = Repair-ChaosConfigurationPermission -Plan $Plan -ConfigurationName $ConfigurationName -WhatIf
     $previewSummary = Get-ChaosPermissionFixSummary -FixResult $preview
+    $currentApproval = Get-ChaosPermissionFixApproval -FixResult $preview
     $applicable = Test-ChaosPermissionFixApplicable -FixResult $preview
+
+    if ($currentApproval.digest -cne $ApprovedPermissionDigest) {
+        Write-ChaosStudyFailure -Title 'Permission preview changed' -Message @"
+The exact role-assignment preview returned by Chaos Studio no longer matches the
+preview the human approved. No grants were applied and no scenario was started.
+
+Approved digest: $ApprovedPermissionDigest
+Current digest:  $($currentApproval.digest)
+"@ -Remediation 'Run chaos-study-run -PrepareApproval again, review the current exact preview, then obtain fresh human approval.'
+        exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+    }
 
     $decision = if ($applicable) {
         'These grants will now be applied, and the configuration validated again.'
@@ -589,6 +728,9 @@ $decision
         permissionFix = [ordered]@{
             attempted        = $true
             applicable       = [bool]$applicable
+            approvedDigest   = $ApprovedPermissionDigest
+            previewDigest    = $currentApproval.digest
+            previewDetails   = $currentApproval.details
             preview          = $previewSummary
             applied          = $appliedSummary
             validationBefore = $before
@@ -690,6 +832,7 @@ function Start-ChaosStudyScenarioRun {
     $started = Invoke-AzChaos -ChaosArgs @(
         'scenario', 'run', 'start',
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name,
         '--config-name', $ConfigurationName
@@ -731,6 +874,7 @@ function Get-ChaosStudyScenarioRun {
         'scenario', 'run', 'show',
         '-n', $RunId,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
     )
@@ -751,13 +895,20 @@ function Stop-ChaosStudyScenarioRun {
         [Parameter(Mandatory)][string]$RunId
     )
 
-    Invoke-AzChaos -AllowFailure -ChaosArgs @(
+    $requestedAt = Get-ChaosUtcNow
+    $response = Invoke-AzChaos -AllowFailure -ChaosArgs @(
         'scenario', 'run', 'cancel',
         '-n', $RunId,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
-    ) | Out-Null
+    )
+    return [pscustomobject]@{
+        requestedAt     = $requestedAt
+        responseReceived = ($null -ne $response)
+        response         = Protect-ChaosObject -InputObject $response
+    }
 }
 
 function Get-ChaosScenarioRunStatus {
@@ -876,19 +1027,37 @@ function Wait-ChaosScenarioRunWindow {
         [Parameter(Mandatory)][object]$Plan,
         [Parameter(Mandatory)][string]$RunId,
         [Parameter(Mandatory)][int]$Minutes,
+        [Parameter(Mandatory)][datetime]$InjectionStartedAt,
         [int]$PollSeconds = 20,
-        [scriptblock]$OnPoll
+        [scriptblock]$OnPoll,
+        [scriptblock]$OnAbortCheck
     )
 
     $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
     $last = $null
     $terminal = $false
+    $abortChecks = @()
+    $abort = $null
 
     while ([datetime]::UtcNow -lt $deadline) {
         $last = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId
         $status = Get-ChaosScenarioRunStatus -Run $last
         if ($OnPoll) { & $OnPoll $status }
         if (Test-ChaosScenarioRunTerminal -Status $status) { $terminal = $true; break }
+
+        $checkedAt = [datetime]::UtcNow
+        if ($OnAbortCheck -and $checkedAt -gt $InjectionStartedAt) {
+            $window = New-ChaosWindow -Name 'abort-check' -Start $InjectionStartedAt -End $checkedAt
+            $check = & $OnAbortCheck $window
+            if ($null -ne $check) {
+                $abortChecks += $check
+                if ($check.triggered) {
+                    $abort = $check.trigger
+                    $abort['observedAt'] = $check.observedAt
+                    break
+                }
+            }
+        }
 
         $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
         if ($remaining -le 0) { break }
@@ -902,6 +1071,8 @@ function Wait-ChaosScenarioRunWindow {
     return [pscustomobject]@{
         run              = $last
         endedEarly       = $terminal
+        abort            = $abort
+        abortChecks      = @($abortChecks)
         observedAt       = Get-ChaosUtcNow
     }
 }
