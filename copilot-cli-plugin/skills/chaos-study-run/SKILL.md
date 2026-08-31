@@ -55,8 +55,9 @@ would rather say *not measured* than mislead.
 
 **Cleanup is unconditional.** The scenario configuration is deleted in a
 `finally` block, so a crash, a Ctrl-C, or a failed collection still tears it
-down. A run still in flight is cancelled. Use `-KeepConfiguration` only when you
-intend to inspect it afterwards.
+down. A run still in flight is cancelled. `-KeepConfiguration` is rejected;
+cleanup failures are retained in `evidence/cleanup/*.json` instead of being
+hidden or treated as successful cleanup.
 
 **Sealed studies are immutable.** Re-running a sealed study exits `13`. Re-test
 by scoping a new one, so history stays comparable.
@@ -88,7 +89,6 @@ Switches worth knowing:
 - `-SignalSource` — add evidence sources beyond the plan's (`metrics:` / `logs:`)
 - `-PollSeconds` — scenario run status poll interval
 - `-PrepareApproval` — freeze the exact blast-radius/RBAC preview required before consent
-- `-KeepConfiguration` — leave the configuration for inspection
 
 ## What actually happens
 
