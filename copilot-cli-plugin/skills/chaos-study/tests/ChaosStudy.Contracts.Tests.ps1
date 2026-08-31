@@ -399,7 +399,7 @@ param([string[]]$Values, [hashtable]$Tags, [string]$OutputPath)
 
         $source | Should -Not -Match 'Write-Error-Card[^\r\n]*-Body'
         $source | Should -Match 'Export-Clixml'
-        $source | Should -Match "Find-ChaosStudy -StudyId `$plannedStudyId"
+        $source.Contains('Find-ChaosStudy -StudyId $plannedStudyId') | Should -BeTrue
         $source | Should -Match '\[''FilterZone''\]'
         $source | Should -Match '\[''FilterPhysicalZone''\]'
         $source | Should -Match '\[''ExcludeTag''\]'

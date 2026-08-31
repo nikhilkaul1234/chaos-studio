@@ -521,7 +521,7 @@ function Resolve-ChaosBlastRadiusResource {
     )
 
     $candidates = @(@($ScopedResources) | Where-Object { $null -ne $_ })
-    if ($null -eq $BlastRadius) { return , @($candidates) }
+    if ($null -eq $BlastRadius) { return @($candidates) }
 
     $filters = Get-ChaosBlastRadiusMember -Container $BlastRadius -Name 'filters'
     if ($null -ne $filters) {
@@ -588,7 +588,7 @@ function Resolve-ChaosBlastRadiusResource {
         }
     }
 
-    return , @($candidates)
+    return @($candidates)
 }
 
 # -- 4. Scenarios ----------------------------------------------------------
