@@ -103,17 +103,23 @@ function ConvertTo-ChaosWorkspaceRecord {
     $identity = & $read $Workspace 'identity'
 
     $scopes = @()
-    $rawScopes = & $read $properties 'scopes'
+    $rawScopes = & $read $Workspace 'scopes'
+    if ($null -eq $rawScopes) { $rawScopes = & $read $properties 'scopes' }
     foreach ($scope in @($rawScopes)) {
         if ($null -eq $scope) { continue }
         $scopes += [string]$scope
+    }
+
+    $provisioningState = & $read $Workspace 'provisioningState'
+    if ([string]::IsNullOrWhiteSpace([string]$provisioningState)) {
+        $provisioningState = & $read $properties 'provisioningState'
     }
 
     return [pscustomobject]@{
         id                = [string](& $read $Workspace 'id')
         name              = [string](& $read $Workspace 'name')
         location          = [string](& $read $Workspace 'location')
-        provisioningState = [string](& $read $properties 'provisioningState')
+        provisioningState = [string]$provisioningState
         identityType      = [string](& $read $identity 'type')
         principalId       = [string](& $read $identity 'principalId')
         scopes            = @($scopes)
@@ -287,24 +293,36 @@ function ConvertTo-ChaosScopedResourceRecord {
 
     $properties = & $read $Resource 'properties'
 
+    $rawZones = & $read $Resource 'zones'
+    if ($null -eq $rawZones) { $rawZones = & $read $properties 'zones' }
     $zones = @()
-    foreach ($zone in @(& $read $properties 'zones')) {
+    foreach ($zone in @($rawZones)) {
         if ($null -eq $zone) { continue }
         $zones += [string]$zone
     }
 
-    $resourceId = [string](& $read $properties 'resourceId')
-    if ([string]::IsNullOrWhiteSpace($resourceId)) {
-        $resourceId = [string](& $read $Resource 'id')
-    }
+    # The resource's `id` is the Microsoft.Chaos discoveredResources child id,
+    # not the target identity. Only target-specific fields are safe to freeze.
+    $resourceId = & $read $Resource 'fullyQualifiedIdentifier'
+    if ([string]::IsNullOrWhiteSpace([string]$resourceId)) { $resourceId = & $read $properties 'fullyQualifiedIdentifier' }
+    if ([string]::IsNullOrWhiteSpace([string]$resourceId)) { $resourceId = & $read $Resource 'resourceId' }
+    if ([string]::IsNullOrWhiteSpace([string]$resourceId)) { $resourceId = & $read $properties 'resourceId' }
+
+    $resourceType = & $read $Resource 'resourceType'
+    if ([string]::IsNullOrWhiteSpace([string]$resourceType)) { $resourceType = & $read $properties 'resourceType' }
+    if ([string]::IsNullOrWhiteSpace([string]$resourceType)) { $resourceType = & $read $properties 'type' }
+
+    $location = & $read $Resource 'location'
+    if ([string]::IsNullOrWhiteSpace([string]$location)) { $location = & $read $properties 'location' }
+
     $tags = & $read $properties 'tags'
     if ($null -eq $tags) { $tags = & $read $Resource 'tags' }
 
     return [pscustomobject]@{
         name         = [string](& $read $Resource 'name')
-        resourceId   = $resourceId
-        resourceType = [string](& $read $properties 'type')
-        location     = [string](& $read $properties 'location')
+        resourceId   = [string]$resourceId
+        resourceType = [string]$resourceType
+        location     = [string]$location
         zones        = @($zones)
         tags         = $tags
     }
