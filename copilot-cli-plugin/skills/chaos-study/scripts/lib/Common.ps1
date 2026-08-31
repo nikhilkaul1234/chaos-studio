@@ -364,7 +364,7 @@ function ConvertTo-ChaosCanonicalJson {
     #>
     param([AllowNull()][object]$InputObject)
     $canonical = ConvertTo-ChaosCanonical -InputObject $InputObject
-    return ($canonical | ConvertTo-Json -Depth 32 -Compress)
+    return (ConvertTo-Json -InputObject $canonical -Depth 32 -Compress)
 }
 
 function Get-ChaosSha256 {
@@ -379,12 +379,12 @@ function Get-ChaosSha256 {
     )
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
-        $bytes = if ($PSCmdlet.ParameterSetName -eq 'File') {
+        [byte[]]$bytes = if ($PSCmdlet.ParameterSetName -eq 'File') {
             [System.IO.File]::ReadAllBytes($Path)
         } else {
             [System.Text.UTF8Encoding]::new($false).GetBytes($Text)
         }
-        return -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
+        return -join ($sha.ComputeHash([byte[]]$bytes) | ForEach-Object { $_.ToString('x2') })
     } finally {
         $sha.Dispose()
     }
@@ -530,7 +530,9 @@ function Get-ChaosSignalValueMap {
     foreach ($point in @($values)) {
         if ($null -eq $point) { continue }
         $raw = $point
-        if ($point -isnot [string] -and $point.PSObject.Properties.Name -contains 'value') {
+        if ($point -is [System.Collections.IDictionary] -and $point.Contains('value')) {
+            $raw = $point['value']
+        } elseif ($point -isnot [string] -and $point.PSObject.Properties.Name -contains 'value') {
             $raw = $point.value
         }
         if ($null -eq $raw) { continue }
