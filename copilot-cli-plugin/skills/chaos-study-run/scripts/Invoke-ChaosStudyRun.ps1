@@ -159,7 +159,7 @@ $($plan.question.hypothesis)
 
     if (@($plan.safety.abortConditions).Count -gt 0) {
         Write-ChaosStudyCard -Title 'Abort if any of these happen' -Status 'warning' -Body (
-            @($plan.safety.abortConditions | ForEach-Object { "  - $_" }) -join "`n"
+            @($plan.safety.abortConditions | ForEach-Object { "  - $(if ($_ -is [string]) { $_ } else { $_.description })" }) -join "`n"
         )
     }
 
@@ -192,6 +192,11 @@ if (-not $approvalReady) {
     Write-ChaosStudyFailure -Title 'Fresh approval preview required' -Message 'The exact preview is missing, changed, not ready, or already consumed. -Force cannot reuse approval.' `
         -Remediation 'Re-scope with live discovery, show the frozen blast-radius and RBAC preview to the human, then request fresh approval.'
     exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+}
+if (@($plan.safety.abortConditions).Count -eq 0 -or
+    @($plan.safety.abortConditions | Where-Object { $_ -is [string] -or $_.kind -notin @('predicate', 'missing-signal') }).Count -gt 0) {
+    Write-ChaosStudyFailure -Title 'Executable abort contract required' -Message 'This plan has no usable live abort rules.' -Remediation 'Re-scope to freeze structured signal-based abort conditions.'
+    exit (Get-ChaosStudyExitCode -Name 'ReadinessFailed')
 }
 Assert-ChaosConsent -Plan $plan -Preview $approvalPreview -Consent $Consent | Out-Null
 if ((ConvertTo-ChaosCanonicalJson @($sources)) -ne (ConvertTo-ChaosCanonicalJson @($plan.signals.configuredSources))) {
@@ -251,6 +256,9 @@ $failureMessage = $null
 # while reporting a failure - hiding the failure behind a scripting error.
 $preEvidence = @()
 $duringEvidence = @()
+$abort = $null
+$cancelAttempted = $false
+$abortMonitor = @{ state = [ordered]@{}; checks = [System.Collections.Generic.List[object]]::new() }
 
 try {
     # Configuration and validation come first. A configuration that cannot
@@ -320,7 +328,7 @@ and you will be asked again.
     Assert-ChaosConfigurationValidated -Validation $validation -ConfigurationName $configurationName | Out-Null
 
     Write-ChaosStudyNote -Message "Collecting baseline evidence over the $($plan.windows.baselineMinutes) minutes before this run began."
-    $preEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $preWindow -Sources $sources
+    $preEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $preWindow -Sources $sources -Adapter $Adapter -StudyPath $studyPath
     Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/pre/signals.json' -Content $preEvidence | Out-Null
 
     Write-ChaosStudyNote -Message 'Starting the scenario run.'
@@ -333,12 +341,29 @@ and you will be asked again.
         -Arguments @($configurationName, $runId) -ExitCode 0 | Out-Null
 
     $waited = Wait-ChaosScenarioRunWindow -Plan $plan -RunId $runId -Minutes $plan.windows.injectMinutes -PollSeconds $PollSeconds `
-        -Adapter $Adapter -StudyPath $studyPath `
+        -Adapter $Adapter -StudyPath $studyPath -InjectionStartedAt (ConvertFrom-ChaosUtcIso -Text $injectStart) `
+        -OnAbortCheck {
+            param($window)
+            $liveSignals = ConvertTo-ChaosList (Invoke-ChaosSignalCollection -Plan $plan -Window $window -Sources $sources -Adapter $Adapter -StudyPath $studyPath)
+            $check = Invoke-ChaosAbortEvaluation -Plan $plan -Signals $liveSignals -Window $window `
+                -InjectionStartedAt (ConvertFrom-ChaosUtcIso -Text $injectStart) -State $abortMonitor.state
+            $abortMonitor.checks.Add($check)
+            Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/abort-checks.json' -Content @($abortMonitor.checks) | Out-Null
+            return $check
+        } `
         -OnPoll { param($status) Write-ChaosStudyNote -Message "Scenario run $runId is $status." }
 
+    if ($null -ne $waited.abort) {
+        $abort = $waited.abort
+        $cancelAttempted = $true
+        $cancelResidue = Invoke-ChaosResidueRemoval -StudyPath $studyPath -Kind scenarioRun -Id $runId -Removal {
+            Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId -Adapter $Adapter -StudyPath $studyPath
+        }
+        Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/abort-cancellation.json' -Content $cancelResidue | Out-Null
+    }
     $injectEnd = Get-ChaosUtcNow
     $runObservation = Get-ChaosScenarioRunObservation -Run $waited.run
-    $outcome = if ($runObservation.status) { $runObservation.status } else { 'unknown' }
+    $outcome = if ($null -ne $abort) { 'Aborted' } elseif ($runObservation.status) { $runObservation.status } else { 'unknown' }
 
     if ($waited.endedEarly -and $outcome -ne 'Succeeded') {
         Write-ChaosStudyNote -Message "The scenario run reached '$outcome' before the injection window elapsed." -Level 'warn'
@@ -346,7 +371,7 @@ and you will be asked again.
 
     Write-ChaosStudyNote -Message 'Collecting evidence from the injection window.'
     $duringWindow = New-ChaosWindow -Name 'during' -Start $injectStart -End $injectEnd
-    $duringEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $duringWindow -Sources $sources
+    $duringEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $duringWindow -Sources $sources -Adapter $Adapter -StudyPath $studyPath
     Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/during/signals.json' -Content $duringEvidence | Out-Null
 } catch {
     $failureMessage = $_.Exception.Message
@@ -358,7 +383,7 @@ and you will be asked again.
     # here survives as unresolved residue (L14) instead of disappearing into a
     # pipeline. Nothing in this block throws; the study may already be unwinding
     # from a real failure and masking it would be worse than any of this.
-    if ($runId) {
+    if ($runId -and -not $cancelAttempted) {
         Write-ChaosStudyNote -Message "Cancelling scenario run $runId."
         $cancelResidue = Invoke-ChaosResidueRemoval -StudyPath $studyPath -Kind 'scenarioRun' -Id $runId -Removal {
             Stop-ChaosStudyScenarioRun -Plan $plan -RunId $runId -Adapter $Adapter -StudyPath $studyPath
@@ -387,7 +412,7 @@ and you will be asked again.
     }
     Save-ChaosRunCheckpoint -Plan $plan -Study $study -StartedAt $startedAt -ConfigurationName $configurationName `
         -RunId $runId -Observation $runObservation -Outcome $outcome -Failure $failureMessage -PreWindow $preWindow `
-        -ValidationStatus $validationStatus -PermissionFix $permissionFix -Signals (@($preEvidence) + @($duringEvidence))
+        -ValidationStatus $validationStatus -PermissionFix $permissionFix -Abort $abort -Signals (@($preEvidence) + @($duringEvidence))
 }
 
 if (-not $injectStart) { $injectStart = $startedAt }
@@ -401,7 +426,7 @@ if (-not (Test-Path -LiteralPath (Join-Path $studyPath 'evidence' 'during' 'sign
 Write-ChaosStudyNote -Message "Waiting $($plan.windows.recoveryMinutes) minutes for recovery."
 Start-Sleep -Seconds ($plan.windows.recoveryMinutes * 60)
 $postWindow = New-ChaosWindow -Name 'post' -Start $injectEnd -End (Get-ChaosUtcNow)
-$postEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $postWindow -Sources $sources
+$postEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $postWindow -Sources $sources -Adapter $Adapter -StudyPath $studyPath
 Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'evidence/post/signals.json' -Content $postEvidence | Out-Null
 
 # -- Run record ------------------------------------------------------------
@@ -458,6 +483,7 @@ $runRecord = [ordered]@{
         outcome     = $outcome
         observation = $runObservation
         failure     = $failureMessage
+        abort       = $abort
     }
     windows       = [ordered]@{
         pre         = $preWindow

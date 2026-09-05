@@ -338,6 +338,41 @@ New-ChaosPreflightConfiguration -StudyId test -Plan `$plan -Adapter local-az -St
 }
 
 Describe 'Live abort' {
+    It 'stops polling on a real signal breach and immediately cancels through the adapter' {
+        $plan = New-Plan
+        $plan | Add-Member safety (New-AbortPlan).safety
+        $started = [datetime]::UtcNow.AddSeconds(-1)
+        $state = [ordered]@{}
+        Mock Invoke-ChaosStudyOperation {
+            if ($Kind -eq 'run.show') { return [pscustomobject]@{ status = 'Running' } }
+            if ($Kind -eq 'run.cancel') { return [pscustomobject]@{ status = 'Cancelling' } }
+            throw "Unexpected operation $Kind"
+        }
+        Mock Start-Sleep { throw 'A tripped abort must not wait for another poll' }
+        $waited = Wait-ChaosScenarioRunWindow -Plan $plan -RunId run-1 -Minutes 1 -InjectionStartedAt $started `
+            -OnAbortCheck {
+                param($window)
+                $signals = @(New-ChaosSignalResult -Source metrics:Availability -Window abort-check -Values @([ordered]@{ value = 95 }))
+                $check = Invoke-ChaosAbortEvaluation -Plan $plan -Signals $signals -Window $window -InjectionStartedAt $started -State $state
+                Save-ChaosStudyArtifact -StudyPath $TestDrive -RelativePath 'evidence/during/abort-checks.json' -Content @($check) | Out-Null
+                $check
+            }
+        if ($null -ne $waited.abort) { Stop-ChaosStudyScenarioRun -Plan $plan -RunId run-1 | Out-Null }
+        $waited.abort.conditionId | Should -Be steady-state-breach
+        (Read-ChaosJsonFile "$TestDrive/evidence/during/abort-checks.json").triggered | Should -BeTrue
+        Should -Invoke Start-Sleep -Times 0
+        Should -Invoke Invoke-ChaosStudyOperation -Times 1 -ParameterFilter { $Kind -eq 'run.cancel' -and $Arguments.cliArgs -contains 'sub' }
+    }
+    It 'measures missing telemetry from the last observed check, not injection start' {
+        $start = [datetime]'2026-08-30T20:00:00Z'
+        $state = [ordered]@{}
+        $plan = New-AbortPlan
+        $good = @(New-ChaosSignalResult -Source metrics:Availability -Window abort-check -Values @([ordered]@{ value = 100 }))
+        Invoke-ChaosAbortEvaluation -Plan $plan -Signals $good -Window (New-ChaosWindow abort-check $start $start.AddMinutes(2)) -InjectionStartedAt $start -State $state | Out-Null
+        $missing = @(New-ChaosSignalResult -Source metrics:Availability -Window abort-check -Caveat missing)
+        (Invoke-ChaosAbortEvaluation -Plan $plan -Signals $missing -Window (New-ChaosWindow abort-check $start.AddMinutes(2) $start.AddMinutes(3)) -InjectionStartedAt $start -State $state).triggered | Should -BeFalse
+        (Invoke-ChaosAbortEvaluation -Plan $plan -Signals $missing -Window (New-ChaosWindow abort-check $start.AddMinutes(3) $start.AddMinutes(4)) -InjectionStartedAt $start -State $state).triggered | Should -BeTrue
+    }
     It 'evaluates a predicate value <Value> as triggered=<Triggered>' -ForEach @(@{ Value = 95; Triggered = $true }, @{ Value = 100; Triggered = $false }) {
         $start = [datetime]'2026-08-30T20:00:00Z'
         $window = New-ChaosWindow abort-check $start $start.AddMinutes(1)

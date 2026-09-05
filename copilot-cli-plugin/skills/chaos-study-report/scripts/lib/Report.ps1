@@ -280,7 +280,7 @@ $($parameterRows -join "`n")
 </tbody></table>
 $(if (@($blastRows).Count -gt 0) { "<h3>Blast radius</h3>`n<table><thead><tr><th>Constraint</th><th>Value</th></tr></thead><tbody>`n$($blastRows -join "`n")`n</tbody></table>" } else { '' })
 <h3>Abort conditions</h3>
-$(New-ChaosReportList -Items $Plan.safety.abortConditions)
+$(New-ChaosReportList -Items @($Plan.safety.abortConditions | ForEach-Object { if ($_ -is [string]) { $_ } else { $_.description } }))
 "@
 
     $observation = $RunRecord.scenarioRun.observation

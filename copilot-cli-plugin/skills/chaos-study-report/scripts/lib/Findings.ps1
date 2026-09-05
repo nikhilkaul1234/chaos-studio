@@ -733,6 +733,10 @@ function Build-StudyFindings {
     }
 
     $predicateDuring = Test-ChaosPredicate -Predicate $predicate -Value (& $readPredicateValue (& $findByName $during))
+    if ($RunRecord.scenarioRun.PSObject.Properties.Name -contains 'abort' -and $null -ne $RunRecord.scenarioRun.abort) {
+        if ($RunRecord.scenarioRun.abort.kind -eq 'predicate') { $predicateDuring = $false }
+        elseif ($RunRecord.scenarioRun.abort.kind -eq 'missing-signal') { $predicateDuring = $null }
+    }
     $predicatePost = Test-ChaosPredicate -Predicate $predicate -Value (& $readPredicateValue (& $findByName $post))
 
     $findings = @()

@@ -214,8 +214,8 @@ function Test-ChaosObservabilityCoverage {
 
     if (@($AvailableSources).Count -eq 0) {
         return New-ChaosReadinessGate -Id 'observability' -Title 'A signal can prove the fault landed' `
-            -Status 'fail' -Severity 'advisory' `
-            -Detail 'No signal source was configured. The study can still run, but it will only be able to prove that the control plane accepted the scenario run - never that the fault reached the workload. Every finding will carry mechanismProven: false.' `
+            -Status 'fail' -Severity 'blocking' `
+            -Detail 'No signal source was configured. Automatic signal-based abort cannot operate without telemetry, so this study cannot run.' `
             -Remediation 'Re-run with -SignalSource "metrics:<metricName>" or -SignalSource "logs:<workspaceId>#<kql>".' `
             -LimitationCode 'L3'
     }
@@ -226,7 +226,7 @@ function Test-ChaosObservabilityCoverage {
     if ($null -ne $SteadyState) {
         $signal = [string]$SteadyState.signal
         $matched = @($AvailableSources | Where-Object {
-                $_ -eq $signal -or $_ -like "*:$signal" -or $_ -like "*:$signal#*"
+                $_ -eq $signal -or $_ -like "metrics:$signal" -or $_ -like "metrics:$signal@*" -or $_ -like "metrics:$signal|*" -or $_ -like "logs:*#$signal*"
             })
         if ($matched.Count -eq 0) {
             return New-ChaosReadinessGate -Id 'observability' -Title 'A signal can prove the fault landed' `

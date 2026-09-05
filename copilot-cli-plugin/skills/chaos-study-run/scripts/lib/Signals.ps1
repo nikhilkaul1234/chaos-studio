@@ -351,6 +351,77 @@ function Invoke-ChaosSignalCollection {
     return ,@($results)
 }
 
+function Get-ChaosPredicateSignalValue {
+    param([AllowEmptyCollection()][object[]]$Signals, [Parameter(Mandatory)][object]$Predicate)
+    foreach ($signal in $Signals) {
+        if ($null -eq $signal) { continue }
+        $map = Get-ChaosSignalValueMap -Signal $signal
+        if ($map.Contains([string]$Predicate.signal)) { return $map[[string]$Predicate.signal] }
+        if ($signal.source -eq "metrics:$($Predicate.signal)" -or $signal.source -eq $Predicate.signal) {
+            foreach ($key in @('value', 'last', 'mean')) {
+                if ($map.Contains($key)) { return $map[$key] }
+            }
+        }
+    }
+    return $null
+}
+
+function Invoke-ChaosAbortEvaluation {
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Signals,
+        [Parameter(Mandatory)][object]$Window,
+        [Parameter(Mandatory)][datetime]$InjectionStartedAt,
+        [Parameter(Mandatory)][System.Collections.IDictionary]$State
+    )
+    if (-not $State.Contains('lastSeen')) { $State['lastSeen'] = @{} }
+    $observedAt = ConvertFrom-ChaosUtcIso -Text $Window.endUtc
+    $evaluations = @()
+    $trigger = $null
+    foreach ($condition in $Plan.safety.abortConditions) {
+        if ($null -eq $condition -or $condition -is [string]) { throw 'Abort conditions must be structured before injection.' }
+        switch ($condition.kind) {
+            'predicate' {
+                $value = Get-ChaosPredicateSignalValue -Signals $Signals -Predicate $condition.predicate
+                $held = Test-ChaosPredicate -Predicate $condition.predicate -Value $value
+                $evaluations += [pscustomobject]@{
+                    conditionId = $condition.id; kind = 'predicate'; value = $value
+                    status = if ($null -eq $held) { 'not-measured' } elseif ($held) { 'clear' } else { 'triggered' }
+                }
+                if ($held -eq $false -and $null -eq $trigger) {
+                    $trigger = [ordered]@{ conditionId = $condition.id; kind = 'predicate'; source = $condition.predicate.signal; reason = "Frozen predicate '$($condition.predicate.raw)' was breached." }
+                }
+            }
+            'missing-signal' {
+                $threshold = [int]$condition.intervalSeconds * [int]$condition.unavailableIntervals
+                if ($threshold -le 0) { throw 'Missing-signal abort requires positive frozen intervals.' }
+                foreach ($source in $condition.sources) {
+                    $id = (ConvertFrom-ChaosSignalSourceSpec -Spec $source).id
+                    $signal = @($Signals | Where-Object { $null -ne $_ -and $_.source -eq $id } | Select-Object -First 1)
+                    $measured = $signal.Count -gt 0 -and $null -ne $signal[0].values -and @($signal[0].values).Count -gt 0
+                    if ($measured) { $State.lastSeen[$id] = $observedAt }
+                    $lastSeen = if ($State.lastSeen.ContainsKey($id)) { [datetime]$State.lastSeen[$id] } else { $InjectionStartedAt }
+                    $missingSeconds = ($observedAt - $lastSeen).TotalSeconds
+                    $tripped = -not $measured -and $missingSeconds -ge $threshold
+                    $evaluations += [pscustomobject]@{
+                        conditionId = $condition.id; kind = 'missing-signal'; source = $id
+                        status = if ($tripped) { 'triggered' } elseif ($measured) { 'clear' } else { 'pending' }
+                        missingSeconds = $missingSeconds; thresholdSeconds = $threshold
+                    }
+                    if ($tripped -and $null -eq $trigger) {
+                        $trigger = [ordered]@{ conditionId = $condition.id; kind = 'missing-signal'; source = $id; reason = "Signal '$id' stopped reporting for the frozen $threshold-second limit." }
+                    }
+                }
+            }
+            default { throw "Unsupported abort condition '$($condition.kind)'." }
+        }
+    }
+    return [pscustomobject]@{
+        observedAt = $Window.endUtc; window = $Window; triggered = ($null -ne $trigger)
+        trigger = $trigger; evaluations = $evaluations; signals = $Signals
+    }
+}
+
 function Test-ChaosSignalCoverage {
     <#
     .SYNOPSIS

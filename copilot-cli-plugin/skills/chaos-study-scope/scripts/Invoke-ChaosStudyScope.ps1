@@ -918,8 +918,15 @@ $plan = [ordered]@{
         reversible      = ($selectedAction.actionType -and $selectedAction.actionType -ine 'Discrete')
         requiresConsent = $true
         abortConditions = @(
-            "Steady state $($predicate.raw) is breached beyond the recovery window."
-            'Any signal source stops reporting for longer than two intervals.'
+            [ordered]@{
+                id = 'steady-state-breach'; kind = 'predicate'; predicate = $predicate
+                description = "Cancel immediately if $($predicate.raw) is breached during injection."
+            }
+            [ordered]@{
+                id = 'signal-unavailable'; kind = 'missing-signal'; sources = @($SignalSource)
+                intervalSeconds = 60; unavailableIntervals = 2
+                description = 'Cancel if a signal source stops reporting for two frozen 60-second intervals.'
+            }
         )
     }
 

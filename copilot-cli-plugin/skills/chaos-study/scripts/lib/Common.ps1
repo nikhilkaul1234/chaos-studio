@@ -665,7 +665,9 @@ function Get-ChaosSignalValueMap {
     foreach ($point in @($values)) {
         if ($null -eq $point) { continue }
         $raw = $point
-        if ($point -isnot [string] -and $point.PSObject.Properties.Name -contains 'value') {
+        if ($point -is [System.Collections.IDictionary] -and $point.Contains('value')) {
+            $raw = $point['value']
+        } elseif ($point -isnot [string] -and $point.PSObject.Properties.Name -contains 'value') {
             $raw = $point.value
         }
         if ($null -eq $raw) { continue }

@@ -58,6 +58,7 @@ function Save-ChaosRunCheckpoint {
         [AllowNull()][object]$PreWindow,
         [AllowNull()][string]$ValidationStatus,
         [AllowNull()][object]$PermissionFix,
+        [AllowNull()][object]$Abort,
         [AllowNull()][AllowEmptyCollection()][object[]]$Signals = @()
     )
     $record = [ordered]@{
@@ -65,7 +66,7 @@ function Save-ChaosRunCheckpoint {
         planHash = $Plan.frozenConfigHash; startedAt = $StartedAt; completedAt = $null
         collectionState = 'recovery-pending'; workspace = $Plan.workspace
         configuration = @{ name = $ConfigurationName; scenario = $Plan.scenario.name; validationStatus = $ValidationStatus; permissionFix = $PermissionFix; retained = $null }
-        scenarioRun = @{ runId = $RunId; outcome = $Outcome; observation = $Observation; failure = $Failure }
+        scenarioRun = @{ runId = $RunId; outcome = $Outcome; observation = $Observation; failure = $Failure; abort = $Abort }
         windows = @{ pre = $PreWindow; during = $null; observation = $null; action = $null; post = $null }
         evidence = @{ pre = 'evidence/pre/signals.json'; during = 'evidence/during/signals.json'; post = 'evidence/post/signals.json' }
         coverage = Test-ChaosSignalCoverage -Signals $Signals
@@ -1775,21 +1776,39 @@ function Wait-ChaosScenarioRunWindow {
         [Parameter(Mandatory)][object]$Plan,
         [Parameter(Mandatory)][string]$RunId,
         [Parameter(Mandatory)][int]$Minutes,
-        [int]$PollSeconds = 20,
+        [Parameter(Mandatory)][datetime]$InjectionStartedAt,
+        [ValidateRange(1, [int]::MaxValue)][int]$PollSeconds = 20,
         [scriptblock]$OnPoll,
+        [scriptblock]$OnAbortCheck,
         [AllowNull()][AllowEmptyString()][string]$Adapter,
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    $deadline = [datetime]::UtcNow.AddMinutes($Minutes)
+    $deadline = $InjectionStartedAt.AddMinutes($Minutes)
     $last = $null
     $terminal = $false
+    $abort = $null
+    $abortChecks = @()
+    $windowStart = $InjectionStartedAt
 
     while ([datetime]::UtcNow -lt $deadline) {
         $last = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId -Adapter $Adapter -StudyPath $StudyPath
         $status = Get-ChaosScenarioRunStatus -Run $last
         if ($OnPoll) { & $OnPoll $status }
         if (Test-ChaosScenarioRunTerminal -Status $status) { $terminal = $true; break }
+
+        $checkedAt = ConvertFrom-ChaosUtcIso -Text (Get-ChaosUtcNow)
+        if ($OnAbortCheck -and $checkedAt -gt $windowStart) {
+            $window = New-ChaosWindow -Name abort-check -Start $windowStart -End $checkedAt
+            $check = & $OnAbortCheck $window
+            if ($null -eq $check) { throw 'Live abort evaluation returned no result; injection cannot continue unmonitored.' }
+            $abortChecks += $check
+            $windowStart = $checkedAt
+            if ($check.triggered) {
+                $abort = $check.trigger
+                break
+            }
+        }
 
         $remaining = ($deadline - [datetime]::UtcNow).TotalSeconds
         if ($remaining -le 0) { break }
@@ -1804,5 +1823,7 @@ function Wait-ChaosScenarioRunWindow {
         run              = $last
         endedEarly       = $terminal
         observedAt       = Get-ChaosUtcNow
+        abort            = $abort
+        abortChecks      = $abortChecks
     }
 }
