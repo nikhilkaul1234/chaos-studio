@@ -218,12 +218,14 @@ Describe 'Frozen scope and transport' {
     }
     It 'requires matching ready unconsumed approval' {
         $plan = New-Plan
-        $preview = [pscustomobject]@{ planHash = $plan.frozenConfigHash; approvalReady = $true; consumedAt = $null }
+        $preview = New-ChaosApprovalPreview -Plan $plan -ConfigurationName cfg -Validation ([pscustomobject]@{ status = 'Succeeded' })
         Test-ChaosApprovalPreviewReady -Plan $plan -Preview $preview | Should -BeTrue
         $preview.planHash = 'different'
         Test-ChaosApprovalPreviewReady -Plan $plan -Preview $preview | Should -BeFalse
         $preview.planHash = $plan.frozenConfigHash; $preview.consumedAt = 'used'
         Test-ChaosApprovalPreviewReady -Plan $plan -Preview $preview | Should -BeFalse
+        $fresh = New-ChaosApprovalPreview -Plan $plan -ConfigurationName cfg -Validation ([pscustomobject]@{ status = 'Succeeded' })
+        $fresh.previewHash | Should -Not -Be $preview.previewHash
     }
     It 'blocks an unobservable abort predicate' {
         $gate = Test-ChaosObservabilityCoverage -AvailableSources @() -SteadyState ([pscustomobject]@{ signal = 'Availability' })
@@ -233,6 +235,38 @@ Describe 'Frozen scope and transport' {
 }
 
 Describe 'Permission authority' {
+    It 'does not apply newly previewed grants under an older approval snapshot' {
+        Mock Get-ChaosConfigurationValidation { New-Validation }
+        Mock Repair-ChaosConfigurationPermission { New-Fix }
+        $plan = New-Plan
+        $grant = Get-ChaosPermissionGrantSet -Plan $plan -ConfigurationName cfg -FixResult (New-Fix)
+        $phrase = Get-ChaosPermissionApprovalPhrase -Plan $plan -GrantSetHash $grant.hash
+        $result = Resolve-ChaosConfigurationValidation -Plan $plan -ConfigurationName cfg -ExpectedGrantSetHash old-preview -PermissionApproval $phrase
+        $result.approvalRequired | Should -BeTrue
+        Should -Invoke Repair-ChaosConfigurationPermission -Times 0 -ParameterFilter { -not $WhatIf }
+    }
+    It 'preserves a preflight InternalError and exits 17 without what-if' {
+        $child = @"
+`$ErrorActionPreference = 'Stop'
+. '$script:Skills/chaos-study-run/scripts/lib/Execute.ps1'
+`$ast = [System.Management.Automation.Language.Parser]::ParseFile('$script:ScopeEntry',[ref]`$null,[ref]`$null)
+foreach (`$node in `$ast.EndBlock.Statements) {
+    if (`$node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and `$node.Name -match '^(New-ChaosPreflightConfiguration|Get-ChaosPreflightConfigurationName|Get-ChaosPreflightValidationStatus)$') { . ([scriptblock]::Create(`$node.Extent.Text)) }
+}
+function Invoke-ChaosStudyOperation {
+    param(`$Kind,`$Arguments,`$Body,`$ExpectedSchema,`$Adapter,`$StudyPath,`$OperationHint)
+    if (`$Kind -eq 'config.create') { return [pscustomobject]@{name='cfg'} }
+    if (`$Kind -eq 'config.validate') { return [pscustomobject]@{status='RequiresAttention';errors=@([pscustomobject]@{errorCode='InternalError';errorMessage='backend RBAC fault'})} }
+    throw "UNEXPECTED WHATIF: `$Kind"
+}
+`$plan = '$(ConvertTo-ChaosCanonicalJson (New-Plan))' | ConvertFrom-Json
+New-ChaosPreflightConfiguration -StudyId test -Plan `$plan -Adapter local-az -StudyPath '$TestDrive'
+"@
+        $output = & pwsh -NoProfile -NonInteractive -Command $child 2>&1
+        $LASTEXITCODE | Should -Be 17 -Because ($output | Out-String)
+        ($output | Out-String) | Should -Not -Match 'UNEXPECTED WHATIF'
+        (Get-Content "$TestDrive/evidence/preflight/validation.json" -Raw) | Should -Match InternalError
+    }
     It 'binds the exact principal-role-scope assignments, not only sets of roles and scopes' {
         $fix = New-Fix
         $a = Get-ChaosPermissionGrantSet -Plan (New-Plan) -ConfigurationName cfg -FixResult $fix

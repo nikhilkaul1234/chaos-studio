@@ -165,6 +165,46 @@ function Test-ChaosPlanLiveDiscovery {
         $null -ne $Plan.scope.projectedResourceCount)
 }
 
+function New-ChaosApprovalPreview {
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [AllowNull()][object]$Validation,
+        [AllowNull()][object]$PermissionPreview
+    )
+    $status = Get-ChaosValidationStatus -Validation $Validation
+    $exact = Test-ChaosPermissionFixApplicable -FixResult $PermissionPreview
+    $grant = if ($exact) { Get-ChaosPermissionGrantSet -Plan $Plan -ConfigurationName $ConfigurationName -FixResult $PermissionPreview } else { $null }
+    $preview = [ordered]@{
+        previewId = [guid]::NewGuid().ToString('N'); generatedAt = Get-ChaosUtcNow
+        planHash = $Plan.frozenConfigHash; consumedAt = $null
+        approvalReady = ($status -eq 'Succeeded' -or ((Test-ChaosValidationRepairable $Validation) -and $exact))
+        configurationName = $ConfigurationName
+        configuration = Get-ChaosStudyConfigurationBody -Plan $Plan
+        projectedResources = @($Plan.scope.projectedResources)
+        workspace = $Plan.workspace
+        validation = @{ status = $status; errors = @(Get-ChaosValidationError -Validation $Validation) }
+        permissionFix = $grant
+    }
+    $preview = Protect-ChaosObject -InputObject $preview
+    $preview['previewHash'] = Get-ChaosDigest -InputObject $preview
+    return [pscustomobject]$preview
+}
+
+function Test-ChaosApprovalPreviewReady {
+    param([Parameter(Mandatory)][object]$Plan, [AllowNull()][object]$Preview)
+    if ($null -eq $Preview) { return $false }
+    foreach ($field in @('planHash', 'approvalReady', 'consumedAt', 'previewId', 'previewHash')) {
+        if ($Preview.PSObject.Properties.Name -notcontains $field) { return $false }
+    }
+    if ($Preview.planHash -ne $Plan.frozenConfigHash -or $Preview.approvalReady -ne $true -or $Preview.consumedAt) { return $false }
+    $copy = [ordered]@{}
+    foreach ($property in $Preview.PSObject.Properties) {
+        if ($property.Name -ne 'previewHash') { $copy[$property.Name] = $property.Value }
+    }
+    return ($Preview.previewHash -eq (Get-ChaosDigest -InputObject $copy))
+}
+
 function Get-ChaosConsentPhrase {
     <#
     .SYNOPSIS
@@ -175,10 +215,10 @@ function Get-ChaosConsentPhrase {
         be typed without reading it, and carries the plan hash so it cannot be
         reused for a different plan.
     #>
-    param([Parameter(Mandatory)][object]$Plan)
+    param([Parameter(Mandatory)][object]$Plan, [AllowNull()][object]$Preview)
 
-    $shortHash = ([string]$Plan.frozenConfigHash).Substring(0, 8)
-    return "inject $($Plan.action.name) into $($Plan.workspace.name) $shortHash"
+    if ($null -eq $Preview) { return "inject $($Plan.action.name) into $($Plan.workspace.name) $($Plan.frozenConfigHash)" }
+    return "inject $($Plan.action.name) into $($Plan.workspace.name) $($Plan.frozenConfigHash) approval $($Preview.previewHash)"
 }
 
 function Assert-ChaosConsent {
@@ -193,10 +233,11 @@ function Assert-ChaosConsent {
     #>
     param(
         [Parameter(Mandatory)][object]$Plan,
+        [AllowNull()][object]$Preview,
         [AllowNull()][AllowEmptyString()][string]$Consent
     )
 
-    $expected = Get-ChaosConsentPhrase -Plan $Plan
+    $expected = Get-ChaosConsentPhrase -Plan $Plan -Preview $Preview
     if ($Consent -and $Consent.Trim() -ceq $expected) { return $true }
 
     $reason = if ([string]::IsNullOrWhiteSpace($Consent)) {
@@ -518,19 +559,50 @@ function Get-ChaosValidationError {
     if ($null -eq $Validation) { return @() }
     $container = if ($Validation.PSObject.Properties.Name -contains 'properties' -and $null -ne $Validation.properties) { $Validation.properties } else { $Validation }
 
-    $errors = @()
-    foreach ($field in @('validationErrors', 'errors')) {
-        if ($container.PSObject.Properties.Name -notcontains $field) { continue }
-        foreach ($item in @($container.$field)) {
-            if ($null -eq $item) { continue }
-            $errors += [ordered]@{
-                code     = if ($item.PSObject.Properties.Name -contains 'errorCode') { [string]$item.errorCode } else { $null }
-                message  = if ($item.PSObject.Properties.Name -contains 'errorMessage') { [string]$item.errorMessage } else { [string]$item }
-                resource = if ($item.PSObject.Properties.Name -contains 'resourceId') { [string]$item.resourceId } else { $null }
+    $pending = @()
+    if ($container.PSObject.Properties.Name -contains 'errors') {
+        $pending += @($container.errors | Where-Object { $null -ne $_ } | ForEach-Object { @{ item = $_; source = 'errors' } })
+    }
+    if ($container.PSObject.Properties.Name -contains 'validationErrors' -and $null -ne $container.validationErrors) {
+        $validationErrors = $container.validationErrors
+        if ($validationErrors -is [array] -or $validationErrors.PSObject.Properties.Name -contains 'errorCode') {
+            $pending += @($validationErrors | ForEach-Object { @{ item = $_; source = 'validationErrors' } })
+        } else {
+            foreach ($property in $validationErrors.PSObject.Properties) {
+                $pending += @($property.Value | Where-Object { $null -ne $_ } | ForEach-Object { @{ item = $_; source = $property.Name } })
             }
         }
     }
-    return $errors
+    foreach ($entry in $pending) {
+        $item = $entry.item
+        $code = if ($item.PSObject.Properties.Name -contains 'errorCode') { [string]$item.errorCode }
+                elseif ($item.PSObject.Properties.Name -contains 'code') { [string]$item.code } else { '' }
+        $repairable = $code -match '^(AuthorizationFailed|Forbidden|PermissionDenied|MissingPermissions|InsufficientPermissions|PermissionValidation(Error)?|MissingRoleAssignments?)$'
+        if (-not $code -and $entry.source -eq 'permission') {
+            $permissions = @()
+            foreach ($field in @('missingPermissions', 'requiredPermissions')) {
+                if ($item.PSObject.Properties.Name -contains $field) { $permissions += @($item.$field | Where-Object { $_ }) }
+            }
+            $roles = @(if ($item.PSObject.Properties.Name -contains 'recommendedRoles') { $item.recommendedRoles | Where-Object { $_ } })
+            $code = 'PermissionValidation'
+            $repairable = $permissions.Count -gt 0 -and $roles.Count -gt 0
+        }
+        [pscustomobject]@{
+            code = $code
+            category = if ($repairable) { 'permission' } else { 'system-or-unknown' }
+            repairable = [bool]$repairable
+            message = if ($item.PSObject.Properties.Name -contains 'errorMessage') { [string]$item.errorMessage }
+                      elseif ($item.PSObject.Properties.Name -contains 'message') { [string]$item.message } else { [string]$item }
+            resource = if ($item.PSObject.Properties.Name -contains 'resourceId') { [string]$item.resourceId } else { $null }
+            details = $item
+        }
+    }
+}
+
+function Test-ChaosValidationRepairable {
+    param([AllowNull()][object]$Validation)
+    $errors = @(Get-ChaosValidationError -Validation $Validation)
+    return ($errors.Count -gt 0 -and @($errors | Where-Object { -not $_.repairable }).Count -eq 0)
 }
 
 function Repair-ChaosConfigurationPermission {
@@ -619,11 +691,18 @@ function Test-ChaosPermissionFixApplicable {
 
     $summary = Get-ChaosPermissionFixSummary -FixResult $FixResult
     if ($null -eq $summary) { return $false }
-    if ($null -eq $summary.totalRequired) { return $false }
+    if ($null -eq $summary.totalRequired -or $summary.whatIfMode -ne $true -or $summary.state -ne 'WhatIfCompleted') { return $false }
 
     $total = 0
-    if ([int]::TryParse([string]$summary.totalRequired, [ref]$total)) { return ($total -gt 0) }
-    return $false
+    if (-not [int]::TryParse([string]$summary.totalRequired, [ref]$total) -or $total -le 0) { return $false }
+    $details = @(Get-ChaosPermissionGrantDetail -FixResult $FixResult | Where-Object { $null -ne $_ })
+    if ($details.Count -ne $total) { return $false }
+    foreach ($detail in $details) {
+        foreach ($field in @('principalId', 'roleDefinitionId', 'scope')) {
+            if ($detail.PSObject.Properties.Name -notcontains $field -or [string]::IsNullOrWhiteSpace([string]$detail.$field)) { return $false }
+        }
+    }
+    return $true
 }
 
 function Format-ChaosPermissionFixSummary {
@@ -734,7 +813,16 @@ function Get-ChaosPermissionGrantSet {
         workspace         = [string]$Plan.workspace.name
         resourceGroup     = [string]$Plan.workspace.resourceGroup
         configurationName = $ConfigurationName
-        workspacePrincipal = if ($Plan.workspace.PSObject.Properties.Name -contains 'principalId') { $Plan.workspace.principalId } else { $null }
+        workspacePrincipal = if ($Plan.workspace.PSObject.Properties.Name -contains 'identityPrincipalId') { $Plan.workspace.identityPrincipalId } else { $null }
+        subscriptionId    = [string]$Plan.workspace.subscriptionId
+        planHash          = [string]$Plan.frozenConfigHash
+        assignments       = @($details | Where-Object { $null -ne $_ } | ForEach-Object {
+            [ordered]@{
+                principalId = if ($_.PSObject.Properties.Name -contains 'principalId') { $_.principalId } else { $null }
+                roleDefinitionId = if ($_.PSObject.Properties.Name -contains 'roleDefinitionId') { $_.roleDefinitionId } else { $null }
+                scope = if ($_.PSObject.Properties.Name -contains 'scope') { $_.scope } else { $null }
+            }
+        } | Sort-Object { ConvertTo-ChaosCanonicalJson $_ })
         totalRequired     = if ($null -eq $summary) { $null } else { $summary.totalRequired }
         recommendedRoles  = $roles
         scopes            = $scopes
@@ -889,7 +977,8 @@ function Resolve-ChaosConfigurationValidation {
         [Parameter(Mandatory)][string]$ConfigurationName,
         [AllowNull()][AllowEmptyString()][string]$Adapter,
         [AllowNull()][AllowEmptyString()][string]$StudyPath,
-        [AllowNull()][AllowEmptyString()][string]$PermissionApproval
+        [AllowNull()][AllowEmptyString()][string]$PermissionApproval,
+        [AllowNull()][AllowEmptyString()][string]$ExpectedGrantSetHash
     )
 
     $validation = Get-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName -Adapter $Adapter -StudyPath $StudyPath
@@ -912,6 +1001,13 @@ function Resolve-ChaosConfigurationValidation {
         errors = @(Get-ChaosValidationError -Validation $validation)
     }
 
+    if (-not (Test-ChaosValidationRepairable -Validation $validation)) {
+        return [pscustomobject]@{
+            validation = $validation; status = $status; permissionFix = $null
+            approvalRequired = $false; approvalPhrase = $null; grantSet = $null
+        }
+    }
+
     Write-ChaosStudyNote -Message "Validation reported '$statusText'. Asking Chaos Studio which role assignments are missing." -Level 'warn'
 
     $preview = Repair-ChaosConfigurationPermission -Plan $Plan -ConfigurationName $ConfigurationName -WhatIf -Adapter $Adapter -StudyPath $StudyPath
@@ -924,7 +1020,7 @@ function Resolve-ChaosConfigurationValidation {
         applicable       = [bool]$applicable
         preview          = $previewSummary
         grantSet         = $grant.grantSet
-        grantSetHash     = $grant.hash
+        grantSetHash     = if ($applicable) { $grant.hash } else { $null }
         grantDetails     = $grant.details
         approved         = $false
         approvalPhrase   = $null
@@ -960,7 +1056,8 @@ The validation gate will refuse this run.
     $phrase = Get-ChaosPermissionApprovalPhrase -Plan $Plan -GrantSetHash $grant.hash
     $permissionFix.approvalPhrase = $phrase
 
-    if (-not (Test-ChaosPermissionApproval -Plan $Plan -GrantSetHash $grant.hash -Approval $PermissionApproval)) {
+    if (($ExpectedGrantSetHash -and $ExpectedGrantSetHash -ne $grant.hash) -or
+        -not (Test-ChaosPermissionApproval -Plan $Plan -GrantSetHash $grant.hash -Approval $PermissionApproval)) {
         # Not approved. Nothing is granted, and the caller decides how to stop.
         $permissionFix.validationAfter = $before
         return [pscustomobject]@{
@@ -1259,7 +1356,8 @@ function Resolve-ChaosRunConfiguration {
         [Parameter(Mandatory)][string]$ConfigurationName,
         [AllowNull()][AllowEmptyString()][string]$Adapter,
         [AllowNull()][AllowEmptyString()][string]$StudyPath,
-        [AllowNull()][AllowEmptyString()][string]$PermissionApproval
+        [AllowNull()][AllowEmptyString()][string]$PermissionApproval,
+        [AllowNull()][AllowEmptyString()][string]$ExpectedGrantSetHash
     )
 
     $dve = $null
@@ -1297,7 +1395,7 @@ function Resolve-ChaosRunConfiguration {
 
     # 2. Re-create, prove effective-plan equality when a plan was frozen, then return.
     New-ChaosStudyConfiguration -Plan $Plan -ConfigurationName $ConfigurationName -Adapter $Adapter -StudyPath $StudyPath | Out-Null
-    $resolved = Resolve-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName -Adapter $Adapter -StudyPath $StudyPath -PermissionApproval $PermissionApproval
+    $resolved = Resolve-ChaosConfigurationValidation -Plan $Plan -ConfigurationName $ConfigurationName -Adapter $Adapter -StudyPath $StudyPath -PermissionApproval $PermissionApproval -ExpectedGrantSetHash $ExpectedGrantSetHash
 
     if ($resolved.approvalRequired) {
         # Grants are needed and have not been approved. Return before proving

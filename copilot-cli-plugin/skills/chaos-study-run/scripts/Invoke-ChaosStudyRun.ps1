@@ -97,6 +97,8 @@ overwrite evidence from the first execution.
 Assert-ChaosPlanIntegrity -Plan $plan | Out-Null
 
 $configurationName = Get-ChaosStudyConfigurationName -StudyId $study.studyId
+$approvalPreview = Read-ChaosJsonFile -Path (Join-Path $studyPath 'approval-preview.v1.json')
+$approvalReady = Test-ChaosApprovalPreviewReady -Plan $plan -Preview $approvalPreview
 $sources = @($SignalSource)
 if ($sources.Count -eq 0 -and $plan.signals.configuredSources) {
     $sources = @($plan.signals.configuredSources)
@@ -108,7 +110,7 @@ $projectedText = if ($null -eq $projectedCount) { '(not resolved)' } else { "$pr
 # -- Dry run ---------------------------------------------------------------
 
 if ($DryRun) {
-    $phrase = Get-ChaosConsentPhrase -Plan $plan
+    $phrase = if ($approvalReady) { Get-ChaosConsentPhrase -Plan $plan -Preview $approvalPreview } else { '(unavailable: re-scope with fresh live discovery and an authoritative RBAC preview)' }
     $previewWindow = New-ChaosWindow -Name 'preview' -Start (ConvertTo-ChaosUtcIso -Instant (Get-Date).ToUniversalTime().AddMinutes(-1)) -End (Get-ChaosUtcNow)
     $preview = Invoke-ChaosSignalCollection -Plan $plan -Window $previewWindow -Sources $sources -DryRun
 
@@ -123,6 +125,11 @@ if ($DryRun) {
         exclusions    = $blast.exclusions
     }
     Write-ChaosStudyDryRunContract -Plan $plan -ConfigurationName $configurationName
+    Write-ChaosStudyCard -Title 'Exact approval preview' -Body 'Only a human may confirm this preview. Each preview can authorize one attempt.' `
+        -JsonPreview ($approvalPreview | ConvertTo-Json -Depth 32)
+    if ($approvalReady -and $null -ne $approvalPreview.permissionFix) {
+        Write-ChaosStudyNote -Message "Separate RBAC approval: -ApprovePermissions '$(Get-ChaosPermissionApprovalPhrase -Plan $plan -GrantSetHash $approvalPreview.permissionFix.hash)'"
+    }
 
     Write-ChaosStudyCard -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
 Nothing has been injected. This is what would happen.
@@ -181,7 +188,20 @@ if ($plan.windows.baselineMinutes -lt 1 -or $plan.windows.recoveryMinutes -lt 1 
     exit (Get-ChaosStudyExitCode -Name 'ReadinessFailed')
 }
 
-Assert-ChaosConsent -Plan $plan -Consent $Consent | Out-Null
+if (-not $approvalReady) {
+    Write-ChaosStudyFailure -Title 'Fresh approval preview required' -Message 'The exact preview is missing, changed, not ready, or already consumed. -Force cannot reuse approval.' `
+        -Remediation 'Re-scope with live discovery, show the frozen blast-radius and RBAC preview to the human, then request fresh approval.'
+    exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+}
+Assert-ChaosConsent -Plan $plan -Preview $approvalPreview -Consent $Consent | Out-Null
+if ((ConvertTo-ChaosCanonicalJson @($sources)) -ne (ConvertTo-ChaosCanonicalJson @($plan.signals.configuredSources))) {
+    Write-ChaosStudyFailure -Title 'Signal sources differ from the approved plan' -Message 'Armed monitoring must use the frozen sources.' -Remediation 'Re-scope to change signal sources.'
+    exit (Get-ChaosStudyExitCode -Name 'ConfigurationDrift')
+}
+$approvalPreview.consumedAt = Get-ChaosUtcNow
+Save-ChaosStudyArtifact -StudyPath $studyPath -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
+$configurationName = $approvalPreview.configurationName
+$expectedGrantSetHash = if ($null -ne $approvalPreview.permissionFix) { $approvalPreview.permissionFix.hash } else { 'no-grants-approved' }
 
 if ($plan.discovery.region -and $plan.scope.region -and -not $Force) {
     # Discovery and the resolved scope must agree, or the action list this plan
@@ -243,13 +263,11 @@ try {
     # is identical before validating. Either way, what runs is provably what was
     # scoped and consented to.
     Write-ChaosStudyNote -Message "Resolving the scenario configuration for $configurationName."
-    $resolvedConfig = Resolve-ChaosRunConfiguration -Plan $plan -ConfigurationName $configurationName -Adapter $Adapter -StudyPath $studyPath -PermissionApproval $ApprovePermissions
+    $resolvedConfig = Resolve-ChaosRunConfiguration -Plan $plan -ConfigurationName $configurationName -Adapter $Adapter -StudyPath $studyPath -PermissionApproval $ApprovePermissions -ExpectedGrantSetHash $expectedGrantSetHash
     $configurationName = $resolvedConfig.configurationName
     if (-not $resolvedConfig.reused) {
         $configurationCreated = $true
-        $configurationResidueKind = 'executionConfiguration'
-        Add-ChaosExecutionResidueEntry -StudyPath $studyPath -ConfigurationName $configurationName `
-            -Workspace $plan.workspace -Adapter $Adapter | Out-Null
+        $configurationResidueKind = 'preflightConfiguration'
         Add-ChaosCommandTrailEntry -StudyPath $studyPath -Phase 'run' -Command 'az chaos scenario config create' `
             -Arguments @($configurationName) -ExitCode 0 | Out-Null
     } else {

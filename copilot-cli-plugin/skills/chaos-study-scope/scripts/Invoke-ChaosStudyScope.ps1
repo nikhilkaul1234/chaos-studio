@@ -385,11 +385,15 @@ function New-ChaosPreflightConfiguration {
     # would have to be widened while there is still nothing at stake, rather than
     # discovering it mid-run. Nothing is granted here under any circumstances.
     $permissionPreview = $null
-    if ($status -ne 'Succeeded') {
+    if ($status -ne 'Succeeded' -and (Test-ChaosValidationRepairable -Validation $validation)) {
         $permissionPreview = Invoke-ChaosStudyOperation -Kind 'config.fixPermissions' `
             -Arguments @{ cliArgs = ($scoping + @('--what-if')) } `
             -ExpectedSchema 'permissionFix.v1' -Adapter $Adapter -StudyPath $StudyPath `
             -OperationHint 'preflight fix-permissions --what-if'
+    }
+    if ($status -ne 'Succeeded' -and -not (Test-ChaosValidationRepairable -Validation $validation)) {
+        Save-ChaosStudyArtifact -StudyPath $StudyPath -RelativePath 'evidence/preflight/validation.json' -Content $validation | Out-Null
+        Assert-ChaosConfigurationValidated -Validation $validation -ConfigurationName $name | Out-Null
     }
 
     return [pscustomobject]@{
@@ -946,6 +950,12 @@ $plan['frozenConfigHash'] = Get-ChaosDigest -InputObject $plan
 # -- Persist ---------------------------------------------------------------
 
 Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath (Get-ChaosArtifactFileName -Artifact 'plan') -Content $plan | Out-Null
+if (-not $SkipDiscovery) {
+    $persistedPlan = Read-ChaosJsonFile -Path (Join-Path $study.path (Get-ChaosArtifactFileName plan))
+    $approvalPreview = New-ChaosApprovalPreview -Plan $persistedPlan -ConfigurationName $preflight.name `
+        -Validation $preflight.validation -PermissionPreview $preflight.permissionPreview
+    Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath 'approval-preview.v1.json' -Content $approvalPreview | Out-Null
+}
 if ($StudyIdOutputPath) {
     Write-ChaosTextFile -Path $StudyIdOutputPath -Content $study.studyId | Out-Null
 }
@@ -983,6 +993,11 @@ $summary = @(
 ) -join "`n"
 
 Write-ChaosStudyCard -Title 'Study planned - nothing has been injected' -Body $summary
+if (-not $SkipDiscovery) {
+    Write-ChaosStudyCard -Title 'Frozen blast radius and RBAC preview - human approval required' `
+        -Body 'An agent must not self-confirm. Review this exact preview before supplying either approval phrase.' `
+        -JsonPreview ($approvalPreview | ConvertTo-Json -Depth 32)
+}
 
 $advisories = @($readiness.gates | Where-Object { $_.status -ne 'pass' })
 if ($advisories.Count -gt 0) {
