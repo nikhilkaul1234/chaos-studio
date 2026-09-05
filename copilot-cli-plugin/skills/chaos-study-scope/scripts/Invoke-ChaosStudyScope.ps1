@@ -100,8 +100,8 @@ param(
     [Parameter(ParameterSetName = 'Brief', Mandatory)][string]$Brief,
 
     [ValidateRange(1, 240)][int]$DurationMinutes = 10,
-    [ValidateRange(0, 240)][int]$BaselineMinutes = 5,
-    [ValidateRange(0, 240)][int]$RecoveryMinutes = 10,
+    [ValidateRange(1, 240)][int]$BaselineMinutes = 5,
+    [ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
 
     # Scenario parameters, keyed by the names in the scenario's live parameter
     # list. Frozen onto the plan as the {key,value} pairs the service takes.

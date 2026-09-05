@@ -117,8 +117,8 @@ param(
     # the decision that runs. Anything passed explicitly still wins.
     [Parameter(ParameterSetName = 'Brief', Mandatory)][string]$Brief,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$DurationMinutes = 10,
-    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(0, 240)][int]$BaselineMinutes = 5,
-    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(0, 240)][int]$RecoveryMinutes = 10,
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$BaselineMinutes = 5,
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][hashtable]$Parameters,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$Hypothesis,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$SignalSource = @(),

@@ -437,6 +437,17 @@ Write-Output "CHECKS=`$script:ExtensionChecks"
 }
 
 Describe 'Portable front door and artifacts' {
+    It 'persists a reportable run checkpoint before recovery can be interrupted' {
+        $study = New-ChaosStudy -ScopeHash scope -StudyRoot "$TestDrive/checkpoints"
+        Save-ChaosRunCheckpoint -Plan (New-Plan) -Study $study -StartedAt '2026-08-30T20:00:00Z' -ConfigurationName cfg -RunId run-1 -Outcome Failed -Failure 'signal collection failed'
+        $record = Read-ChaosJsonFile (Join-Path $study.path (Get-ChaosArtifactFileName runRecord))
+        $record.scenarioRun.runId | Should -Be run-1
+        $record.scenarioRun.failure | Should -Be 'signal collection failed'
+        $record.collectionState | Should -Be recovery-pending
+        $record.windows.post | Should -BeNullOrEmpty
+        $source = Get-Content $script:RunEntry -Raw
+        $source.IndexOf('Save-ChaosRunCheckpoint -Plan') | Should -BeLessThan $source.IndexOf('Start-Sleep -Seconds ($plan.windows.recoveryMinutes')
+    }
     It 'runs the default dry-run from a skills-only install without plugin scripts' {
         $install = "$TestDrive/install"
         New-Item -ItemType Directory "$install/skills" -Force | Out-Null

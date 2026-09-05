@@ -175,6 +175,11 @@ if (-not (Test-ChaosPlanLiveDiscovery -Plan $plan)) {
     exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
 }
 
+if ($plan.windows.baselineMinutes -lt 1 -or $plan.windows.recoveryMinutes -lt 1 -or $plan.windows.injectMinutes -lt 1) {
+    Write-ChaosStudyFailure -Title 'Invalid evidence windows' -Message 'Baseline, injection and recovery must each be positive.' -Remediation 'Re-scope this study with positive evidence windows.'
+    exit (Get-ChaosStudyExitCode -Name 'ReadinessFailed')
+}
+
 Assert-ChaosConsent -Plan $plan -Consent $Consent | Out-Null
 
 if ($plan.discovery.region -and $plan.scope.region -and -not $Force) {
@@ -361,6 +366,9 @@ and you will be asked again.
                 -Arguments @($configurationName, "cleanup=$($configResidue.status)") -ExitCode $(if ($configResidue.status -eq 'succeeded') { 0 } else { 1 }) | Out-Null
         }
     }
+    Save-ChaosRunCheckpoint -Plan $plan -Study $study -StartedAt $startedAt -ConfigurationName $configurationName `
+        -RunId $runId -Observation $runObservation -Outcome $outcome -Failure $failureMessage -PreWindow $preWindow `
+        -ValidationStatus $validationStatus -PermissionFix $permissionFix -Signals (@($preEvidence) + @($duringEvidence))
 }
 
 if (-not $injectStart) { $injectStart = $startedAt }
@@ -406,6 +414,7 @@ $actionWindow = Get-ChaosActionWindow -Observation $runObservation -ActionType $
 
 $runRecord = [ordered]@{
     recordVersion = 'run-record.v3'
+    collectionState = 'complete'
     studyId       = $study.studyId
     scopeHash     = $study.scopeHash
     planHash      = $plan.frozenConfigHash

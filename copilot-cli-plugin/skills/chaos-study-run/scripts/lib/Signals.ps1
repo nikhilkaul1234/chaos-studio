@@ -357,7 +357,7 @@ function Test-ChaosSignalCoverage {
         Summarise how much of the evidence is real, so the report can be honest
         about it rather than presenting gaps as results.
     #>
-    param([Parameter(Mandatory)][object[]]$Signals)
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Signals)
 
     $all = @($Signals)
     $measured = @($all | Where-Object { $null -ne $_.values })

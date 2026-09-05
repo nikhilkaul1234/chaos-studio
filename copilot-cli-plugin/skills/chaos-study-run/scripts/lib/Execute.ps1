@@ -45,6 +45,35 @@ Set-StrictMode -Version Latest
 
 # -- Adapter resolution ----------------------------------------------------
 
+function Save-ChaosRunCheckpoint {
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][object]$Study,
+        [Parameter(Mandatory)][string]$StartedAt,
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [AllowNull()][string]$RunId,
+        [AllowNull()][object]$Observation,
+        [string]$Outcome = 'Failed',
+        [AllowNull()][string]$Failure,
+        [AllowNull()][object]$PreWindow,
+        [AllowNull()][string]$ValidationStatus,
+        [AllowNull()][object]$PermissionFix,
+        [AllowNull()][AllowEmptyCollection()][object[]]$Signals = @()
+    )
+    $record = [ordered]@{
+        recordVersion = 'run-record.v3'; studyId = $Study.studyId; scopeHash = $Study.scopeHash
+        planHash = $Plan.frozenConfigHash; startedAt = $StartedAt; completedAt = $null
+        collectionState = 'recovery-pending'; workspace = $Plan.workspace
+        configuration = @{ name = $ConfigurationName; scenario = $Plan.scenario.name; validationStatus = $ValidationStatus; permissionFix = $PermissionFix; retained = $null }
+        scenarioRun = @{ runId = $RunId; outcome = $Outcome; observation = $Observation; failure = $Failure }
+        windows = @{ pre = $PreWindow; during = $null; observation = $null; action = $null; post = $null }
+        evidence = @{ pre = 'evidence/pre/signals.json'; during = 'evidence/during/signals.json'; post = 'evidence/post/signals.json' }
+        coverage = Test-ChaosSignalCoverage -Signals $Signals
+        exercise = $null; residue = Get-ChaosResidueSummary -StudyPath $Study.path
+    }
+    Save-ChaosStudyArtifact -StudyPath $Study.path -RelativePath (Get-ChaosArtifactFileName runRecord) -Content $record | Out-Null
+}
+
 function Get-ChaosExecutionAdapter {
     <#
     .SYNOPSIS
