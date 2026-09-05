@@ -145,7 +145,7 @@ function Get-ChaosOperationRegistry {
         'workspace.get' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('workspace', 'show') -Composed @(
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('workspace', 'show') -Composed @(
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName')
                 ))

@@ -65,6 +65,21 @@ BeforeAll {
 }
 
 Describe 'Evidence and discovery' {
+    It 'propagates non-NotFound workspace failures' {
+        Mock Test-ChaosCliAvailable { $true }
+        Mock Invoke-ChaosStudyOperation { throw 'AuthorizationFailed: cannot read workspace' }
+        { Get-ChaosStudyWorkspace -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws -Adapter local-az } | Should -Throw '*AuthorizationFailed*'
+    }
+    It 'returns absent only on explicit workspace NotFound' {
+        Mock Test-ChaosCliAvailable { $true }
+        Mock Invoke-ChaosStudyOperation { throw '(ResourceNotFound) workspace does not exist' }
+        Get-ChaosStudyWorkspace -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws -Adapter local-az | Should -BeNullOrEmpty
+    }
+    It 'does not treat an empty workspace response as absence' {
+        Mock Test-ChaosCliAvailable { $true }
+        Mock Invoke-ChaosStudyOperation { $null }
+        { Get-ChaosStudyWorkspace -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws -Adapter local-az } | Should -Throw '*creation is not authorized*'
+    }
     It 'uses canonical window bounds at the metric operation seam' {
         Mock Test-ChaosOperationSeamReady { $true }
         Mock Invoke-ChaosStudyOperation { [pscustomobject]@{ body = [pscustomobject]@{ value = @() } } }

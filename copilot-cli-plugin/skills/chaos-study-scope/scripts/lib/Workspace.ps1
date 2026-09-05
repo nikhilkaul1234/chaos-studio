@@ -109,6 +109,7 @@ function ConvertTo-ChaosWorkspaceRecord {
     }
 
     $properties = & $read $Workspace 'properties'
+    if ($null -eq $properties) { $properties = $Workspace }
     $identity = & $read $Workspace 'identity'
 
     $scopes = @()
@@ -148,16 +149,25 @@ function Get-ChaosStudyWorkspace {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    if (-not (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath)) { return $null }
+    if (-not (Test-ChaosCliAvailable -Adapter $Adapter -StudyPath $StudyPath)) {
+        throw 'AdapterUnavailable: cannot determine whether the workspace exists.'
+    }
 
     $cliArgs = @('--name', $WorkspaceName, '--resource-group', $ResourceGroup)
     if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
         $cliArgs += @('--subscription', $SubscriptionId)
     }
 
-    $response = Invoke-ChaosStudyOperation -Kind 'workspace.get' -Arguments @{ cliArgs = $cliArgs } `
-        -ExpectedSchema 'any.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'workspace show'
-    if ($null -eq $response) { return $null }
+    try {
+        $response = Invoke-ChaosStudyOperation -Kind 'workspace.get' -Arguments @{ cliArgs = $cliArgs } `
+            -ExpectedSchema 'workspace.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'workspace show'
+    } catch {
+        if ($_.Exception.Message -match '\b(ResourceNotFound|WorkspaceNotFound|NotFound)\b|(?:Status(?:Code)?[=: ]+|HTTP[ /])404\b') {
+            return $null
+        }
+        throw
+    }
+    if ($null -eq $response) { throw 'Workspace lookup returned no resource and no NotFound response; creation is not authorized.' }
     return ConvertTo-ChaosWorkspaceRecord -Workspace $response
 }
 
