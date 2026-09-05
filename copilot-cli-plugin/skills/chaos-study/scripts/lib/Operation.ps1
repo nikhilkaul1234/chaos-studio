@@ -338,8 +338,9 @@ function Invoke-ChaosStudyOperation {
         }
     }
 
-    # Load once in the caller's script scope, never inside a dispatch function.
-    if (-not (Get-Command Get-ChaosOperationRegistry -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'Adapters.ps1')
-    }
+}
+
+# Load once in the caller's script scope, never inside a dispatch function.
+if (-not (Get-Command Get-ChaosOperationRegistry -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Adapters.ps1')
 }
