@@ -123,7 +123,7 @@ if ($DryRun) {
         exclusions    = $blast.exclusions
     }
 
-    Write-Card -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
+    Write-ChaosStudyCard -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
 Nothing has been injected. This is what would happen.
 
 $($plan.question.hypothesis)
@@ -140,7 +140,7 @@ $($plan.question.hypothesis)
         'Configuration'      = $configurationName
     })
 
-    Write-Table -Title 'Evidence that would be collected' -Data @(
+    Write-ChaosStudyTable -Title 'Evidence that would be collected' -Data @(
         foreach ($signal in $preview) {
             [pscustomobject]@{
                 Source = $signal.source
@@ -150,12 +150,12 @@ $($plan.question.hypothesis)
     )
 
     if (@($plan.safety.abortConditions).Count -gt 0) {
-        Write-Card -Title 'Abort if any of these happen' -Status 'warning' -Body (
+        Write-ChaosStudyCard -Title 'Abort if any of these happen' -Status 'warning' -Body (
             @($plan.safety.abortConditions | ForEach-Object { "  - $_" }) -join "`n"
         )
     }
 
-    Write-Card -Title 'To run it' -Status 'info' -Body @"
+    Write-ChaosStudyCard -Title 'To run it' -Status 'info' -Body @"
 Injection requires a consent phrase that names the blast radius and pins this
 exact plan. Type it exactly:
 
@@ -464,7 +464,7 @@ $residueText = if ($residueSummary.total -eq 0) {
     "$($residueSummary.unresolved) of $($residueSummary.total) NOT confirmed removed"
 }
 
-Write-Card -Title "Run complete - study $($study.studyId)" -Status $status -Body @"
+Write-ChaosStudyCard -Title "Run complete - study $($study.studyId)" -Status $status -Body @"
 The scenario run has stopped. Cleanup outcomes are recorded in the residue
 ledger, including anything that could not be confirmed removed. Evidence is
 recorded; it has not yet been interpreted.
@@ -478,7 +478,7 @@ recorded; it has not yet been interpreted.
 })
 
 if ($coverage.missing -gt 0) {
-    Write-Card -Title 'Some evidence is missing' -Status 'warning' -Body (
+    Write-ChaosStudyCard -Title 'Some evidence is missing' -Status 'warning' -Body (
         @($coverage.caveats | ForEach-Object { "  - $_" }) -join "`n"
     )
 }

@@ -139,14 +139,30 @@ function Write-ChaosStudyCard {
     #>
     param(
         [Parameter(Mandatory)][string]$Title,
-        [Parameter(Mandatory)][AllowEmptyString()][string]$Body
+        [AllowEmptyString()][string]$Body = '',
+        [string]$Status = 'info',
+        [System.Collections.IDictionary]$Properties,
+        [string]$JsonPreview
     )
     if (Get-Command Write-Card -ErrorAction SilentlyContinue) {
-        Write-Card -Title $Title -Body $Body
+        Write-Card @PSBoundParameters | ForEach-Object { Write-Host $_ }
     } else {
-        Write-Output "## $Title"
-        Write-Output ''
-        Write-Output $Body
+        Write-Host "## $Title"
+        Write-Host $Body
+        if ($Properties) {
+            foreach ($key in $Properties.Keys) { Write-Host "$key`: $($Properties[$key])" }
+        }
+        if ($JsonPreview) { Write-Host $JsonPreview }
+    }
+}
+
+function Write-ChaosStudyTable {
+    param([string]$Title, [AllowEmptyCollection()][object[]]$Data)
+    if (Get-Command Write-Table -ErrorAction SilentlyContinue) {
+        Write-Table -Title $Title -Data $Data | ForEach-Object { Write-Host $_ }
+    } else {
+        Write-Host "### $Title"
+        Write-Host ($Data | Format-Table -AutoSize | Out-String)
     }
 }
 

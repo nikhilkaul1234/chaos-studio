@@ -400,6 +400,26 @@ Describe 'Cleanup and CLI collection boundaries' {
 }
 
 Describe 'Portable front door and artifacts' {
+    It 'runs the default dry-run from a skills-only install without plugin scripts' {
+        $install = "$TestDrive/install"
+        New-Item -ItemType Directory "$install/skills" -Force | Out-Null
+        Copy-Item "$script:Skills/chaos-study*" "$install/skills" -Recurse
+        $study = New-ChaosStudy -ScopeHash scope -StudyRoot "$TestDrive/studies"
+        $plan = New-Plan
+        $plan | Add-Member question ([pscustomobject]@{ hypothesis = 'availability remains healthy' })
+        $plan | Add-Member signals ([pscustomobject]@{ configuredSources = @() })
+        $plan | Add-Member safety ([pscustomobject]@{ abortConditions = @() })
+        $plan.scope | Add-Member discoveredResourceCount 1
+        $plan.action | Add-Member displayName Shutdown
+        $plan.action | Add-Member canonicalId urn:shutdown
+        $plan.frozenConfigHash = Get-ChaosPlanFingerprint $plan
+        Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath (Get-ChaosArtifactFileName plan) -Content $plan | Out-Null
+        $output = & pwsh -NoProfile -NonInteractive -File "$install/skills/chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1" -StudyRoot "$TestDrive/studies" 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output | Out-String)
+        ($output | Out-String) | Should -Match 'Dry run complete'
+        Test-Path "$install/scripts" | Should -BeFalse
+        Get-ChaosStudyState -StudyPath $study.path | Should -Be PLANNED
+    }
     It 'transports arrays, tags, booleans and delimiter-containing values losslessly' {
         $phase = "$TestDrive/phase.ps1"
         'param([string[]]$Values,[hashtable]$Tags,[bool]$DryRun,[string]$Out) @{values=$Values;tags=$Tags;dry=$DryRun}|ConvertTo-Json|Set-Content $Out' | Set-Content $phase

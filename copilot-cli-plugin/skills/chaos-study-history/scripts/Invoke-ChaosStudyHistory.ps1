@@ -127,7 +127,7 @@ function Get-ChaosMemberName {
 }
 
 if ($index.Count -eq 0) {
-    Write-Card -Title 'No studies yet' -Status 'info' -Body @"
+    Write-ChaosStudyCard -Title 'No studies yet' -Status 'info' -Body @"
 No studies were found under the study root. History becomes useful after the
 first sealed study - run the chaos-study skill to create one.
 "@
@@ -151,7 +151,7 @@ switch ($Action) {
             }
         }
         if ($Json) { $rows | ConvertTo-Json -Depth 6; exit (Get-ChaosStudyExitCode -Name 'Success') }
-        Write-Table -Title "Studies ($($index.Count))" -Data @($rows)
+        Write-ChaosStudyTable -Title "Studies ($($index.Count))" -Data @($rows)
         $scopes = @($index | Group-Object scopeHash)
         Write-ChaosStudyNote -Message "$($scopes.Count) distinct scope(s). Compare within a scope: -Action compare -ScopeHash <hash>."
         exit (Get-ChaosStudyExitCode -Name 'Success')
@@ -176,7 +176,7 @@ switch ($Action) {
             if ([string]::IsNullOrWhiteSpace($shownAction)) { $shownAction = '-' }
         }
         $shownVerdicts = if ($entry.summary) { Get-ChaosStudyVerdicts -Study $entry } else { $null }
-        Write-Card -Title "Study $($entry.studyId)" -Status 'info' -Body @"
+        Write-ChaosStudyCard -Title "Study $($entry.studyId)" -Status 'info' -Body @"
 $(if ($shownVerdicts) { $shownVerdicts.studyVerdict } else { 'Not yet reported.' })
 "@ -Properties ([ordered]@{
             'State'             = $entry.state
@@ -190,7 +190,7 @@ $(if ($shownVerdicts) { $shownVerdicts.studyVerdict } else { 'Not yet reported.'
             'Report'            = (Join-Path $entry.path 'report.html')
         })
         if (@($findings).Count -gt 0) {
-            Write-Table -Title 'Findings' -Data @($findings | ForEach-Object {
+            Write-ChaosStudyTable -Title 'Findings' -Data @($findings | ForEach-Object {
                 [pscustomobject]@{ Severity = $_.severity; Confidence = $_.confidence; Finding = $_.title }
             })
         }
@@ -210,7 +210,7 @@ $(if ($shownVerdicts) { $shownVerdicts.studyVerdict } else { 'Not yet reported.'
         $baseline = Resolve-Entry -Reference $(if ($Against -eq 'previous') { 'latest' } else { $Against }) -Pool $pool
 
         if (-not $baseline) {
-            Write-Card -Title 'Only one study in this scope' -Status 'info' -Body @"
+            Write-ChaosStudyCard -Title 'Only one study in this scope' -Status 'info' -Body @"
 Study $($candidate.studyId) is the only sealed study for scope $($candidate.scopeHash).
 A comparison needs two. Run the same study again later and compare then - that
 series is where the value is.
@@ -241,7 +241,7 @@ $(@($comparison.reasons | ForEach-Object { "  - $_" }) -join "`n")
             'stable'    { 'info' }
             default     { 'warning' }
         }
-        Write-Card -Title "Comparison: $($comparison.direction)" -Status $status -Body @"
+        Write-ChaosStudyCard -Title "Comparison: $($comparison.direction)" -Status $status -Body @"
 $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study $($comparison.baseline.studyVerdict)
   -> $($candidate.studyId): predicate $($comparison.candidate.predicateVerdict), study $($comparison.candidate.studyVerdict)
 "@ -Properties ([ordered]@{
@@ -257,13 +257,13 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
             @{ label = 'Resolved'; items = $comparison.resolved }
         )) {
             if (@($group.items).Count -gt 0) {
-                Write-Table -Title $group.label -Data @($group.items | ForEach-Object {
+                Write-ChaosStudyTable -Title $group.label -Data @($group.items | ForEach-Object {
                     [pscustomobject]@{ Severity = $_.severity; Finding = $_.title }
                 })
             }
         }
         if (@($comparison.persisted).Count -gt 0) {
-            Write-Table -Title 'Persisted' -Data @($comparison.persisted | ForEach-Object {
+            Write-ChaosStudyTable -Title 'Persisted' -Data @($comparison.persisted | ForEach-Object {
                 [pscustomobject]@{ Movement = $_.movement; Was = $_.wasSeverity; Now = $_.nowSeverity; Finding = $_.title }
             })
         }
@@ -442,7 +442,7 @@ $detail
 
         $command = ($lines -join "`n")
 
-        Write-Card -Title "Rerun study $($entry.studyId)" -Status 'info' -Body @"
+        Write-ChaosStudyCard -Title "Rerun study $($entry.studyId)" -Status 'info' -Body @"
 Rerunning creates a new study rather than overwriting this one, so the pair can
 be compared afterwards. The workspace scope and the action are both resolved
 live again, so a rerun fails loudly if the platform no longer offers the action
@@ -454,7 +454,7 @@ or the workspace no longer covers the same resources. Nothing has been injected
             'Action'    = [string]$plan.action.displayName
             'Predicate' = [string]$plan.question.steadyState.raw
         })
-        Write-Card -Title 'Command' -Status 'info' -Body $command
+        Write-ChaosStudyCard -Title 'Command' -Status 'info' -Body $command
         exit (Get-ChaosStudyExitCode -Name 'Success')
     }
 }
