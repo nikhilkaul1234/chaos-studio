@@ -147,6 +147,29 @@ Describe 'Frozen scope and transport' {
             $i = [array]::IndexOf([object[]]$Arguments.cliArgs, '--subscription')
             $i -lt 0 -or $Arguments.cliArgs[$i + 1] -ne 'sub'
         }
+        It 'records a subscription on every preflight and run CLI command' {
+            $script:commands = @()
+            Mock Test-ChaosLocalAzAdapterReady { @() }
+            Mock Invoke-ChaosStudyAzChaos {
+                $script:commands += ,$ChaosArgs
+                [pscustomobject]@{ name = 'run-1'; status = 'Succeeded' }
+            }
+            $plan = New-Plan
+            New-ChaosPreflightConfiguration -StudyId test -Plan $plan -Adapter local-az -StudyPath $TestDrive | Out-Null
+            New-ChaosStudyConfiguration -Plan $plan -ConfigurationName cfg | Out-Null
+            Get-ChaosConfigurationValidation -Plan $plan -ConfigurationName cfg | Out-Null
+            Repair-ChaosConfigurationPermission -Plan $plan -ConfigurationName cfg -WhatIf | Out-Null
+            Start-ChaosStudyScenarioRun -Plan $plan -ConfigurationName cfg -Validation ([pscustomobject]@{ status = 'Succeeded' }) | Out-Null
+            Get-ChaosStudyScenarioRun -Plan $plan -RunId run-1 | Out-Null
+            Stop-ChaosStudyScenarioRun -Plan $plan -RunId run-1 | Out-Null
+            Remove-ChaosStudyConfiguration -Plan $plan -ConfigurationName cfg | Out-Null
+            foreach ($command in $script:commands) {
+                $i = [array]::IndexOf([object[]]$command, '--subscription')
+                $i | Should -BeGreaterOrEqual 0
+                $command[$i + 1] | Should -Be sub
+            }
+            @($script:commands | ForEach-Object { $_ -join ' ' }) -join "`n" | Should -Match 'scenario run start'
+        }
     }
     It 'hashes the exact persisted redacted configuration' {
         $plan = New-Plan

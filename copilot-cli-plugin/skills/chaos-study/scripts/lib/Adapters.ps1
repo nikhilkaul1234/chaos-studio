@@ -109,8 +109,19 @@ function Get-ChaosOperationCliArgs {
         [AllowNull()][object]$Composed = $null
     )
     $explicit = Get-ChaosOperationArg -Arguments $Arguments -Name 'cliArgs' -Default $null
-    if ($null -ne $explicit) { return @($Verb) + @($explicit) }
-    return @($Verb) + @($Composed)
+    $result = if ($null -ne $explicit) { @($Verb) + @($explicit) } else { @($Verb) + @($Composed) }
+    if ($result -notcontains '--subscription') {
+        $subscription = Get-ChaosOperationArg -Arguments $Arguments -Name subscriptionId
+        if ([string]::IsNullOrWhiteSpace($subscription)) {
+            throw 'ScopeUnverified: every Chaos operation requires an explicit subscription.'
+        }
+        $result += @('--subscription', $subscription)
+    }
+    $index = [array]::IndexOf($result, '--subscription')
+    if ($index + 1 -ge $result.Count -or [string]::IsNullOrWhiteSpace($result[$index + 1]) -or $result[$index + 1] -like '-*') {
+        throw 'ScopeUnverified: the Chaos operation subscription is empty.'
+    }
+    return $result
 }
 
 # -- Kind -> adapter-implementation registry --------------

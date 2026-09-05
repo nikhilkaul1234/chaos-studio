@@ -82,6 +82,7 @@ function Get-ChaosConfigurationScopingArgument {
     return @(
         '-n', $ConfigurationName,
         '-g', $Plan.workspace.resourceGroup,
+        '--subscription', $Plan.workspace.subscriptionId,
         '--workspace-name', $Plan.workspace.name,
         '--scenario-name', $Plan.scenario.name
     )
@@ -1300,12 +1301,11 @@ function Start-ChaosStudyScenarioRun {
 
     Assert-ChaosConfigurationValidated -Validation $Validation -ConfigurationName $ConfigurationName | Out-Null
 
-    $started = Invoke-ChaosStudyOperation -Kind 'run.start' -Arguments @{
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-        configName    = $ConfigurationName
-    } -ExpectedSchema 'run.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+    $started = Invoke-ChaosStudyOperation -Kind 'run.start' -Arguments @{ cliArgs = @(
+        '-g', $Plan.workspace.resourceGroup, '--subscription', $Plan.workspace.subscriptionId,
+        '--workspace-name', $Plan.workspace.name, '--scenario-name', $Plan.scenario.name,
+        '--config-name', $ConfigurationName
+    ) } -ExpectedSchema 'run.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario run start'
 
     if ($null -eq $started) {
@@ -1342,12 +1342,10 @@ function Get-ChaosStudyScenarioRun {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    return Invoke-ChaosStudyOperation -Kind 'run.show' -Arguments @{
-        runId         = $RunId
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-    } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+    return Invoke-ChaosStudyOperation -Kind 'run.show' -Arguments @{ cliArgs = @(
+        '-n', $RunId, '-g', $Plan.workspace.resourceGroup, '--subscription', $Plan.workspace.subscriptionId,
+        '--workspace-name', $Plan.workspace.name, '--scenario-name', $Plan.scenario.name
+    ) } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario run show'
 }
 
@@ -1368,12 +1366,10 @@ function Stop-ChaosStudyScenarioRun {
         [AllowNull()][AllowEmptyString()][string]$StudyPath
     )
 
-    return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments @{
-        runId         = $RunId
-        resourceGroup = $Plan.workspace.resourceGroup
-        workspaceName = $Plan.workspace.name
-        scenarioName  = $Plan.scenario.name
-    } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
+    return Invoke-ChaosStudyOperation -Kind 'run.cancel' -Arguments @{ cliArgs = @(
+        '-n', $RunId, '-g', $Plan.workspace.resourceGroup, '--subscription', $Plan.workspace.subscriptionId,
+        '--workspace-name', $Plan.workspace.name, '--scenario-name', $Plan.scenario.name
+    ) } -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
         -StudyPath $StudyPath -OperationHint 'scenario run cancel'
 }
 
