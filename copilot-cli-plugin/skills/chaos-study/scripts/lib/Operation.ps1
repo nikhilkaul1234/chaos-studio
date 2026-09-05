@@ -195,9 +195,6 @@ function Assert-ChaosAdapterAvailable {
     }
 
     if ($Adapter -eq 'local-az') {
-        if (-not (Get-Command Test-ChaosLocalAzAdapterReady -ErrorAction SilentlyContinue)) {
-            . (Join-Path $PSScriptRoot 'Adapters.ps1')
-        }
         $missing = @(Test-ChaosLocalAzAdapterReady)
         if ($missing.Count -gt 0) {
             $remediation = "Install the Azure CLI and sign in with az login, or select the 'external' adapter so a host can broker Azure access."
@@ -243,9 +240,6 @@ function Test-ChaosOperationSeamReady {
     # renders a failure card on its way to throwing, which is right for a hard
     # stop and wrong for a predicate, so the probe is repeated rather than
     # reused.
-    if (-not (Get-Command Test-ChaosLocalAzAdapterReady -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'Adapters.ps1')
-    }
     return (@(Test-ChaosLocalAzAdapterReady).Count -eq 0)
 }
 
@@ -312,10 +306,6 @@ function Invoke-ChaosStudyOperation {
         [string]$OperationHint
     )
 
-    if (-not (Get-Command Get-ChaosOperationRegistry -ErrorAction SilentlyContinue)) {
-        . (Join-Path $PSScriptRoot 'Adapters.ps1')
-    }
-
     $registry = Get-ChaosOperationRegistry
     if (-not $registry.ContainsKey($Kind)) {
         throw "Unknown operation kind '$Kind'. Known: $(($registry.Keys | Sort-Object) -join ', ')"
@@ -346,5 +336,10 @@ function Invoke-ChaosStudyOperation {
             return (Invoke-ChaosExternalOperation -Kind $Kind -Arguments $Arguments -Body $Body `
                     -ExpectedSchema $ExpectedSchema -StudyPath $StudyPath -OperationHint $OperationHint)
         }
+    }
+
+    # Load once in the caller's script scope, never inside a dispatch function.
+    if (-not (Get-Command Get-ChaosOperationRegistry -ErrorAction SilentlyContinue)) {
+        . (Join-Path $PSScriptRoot 'Adapters.ps1')
     }
 }

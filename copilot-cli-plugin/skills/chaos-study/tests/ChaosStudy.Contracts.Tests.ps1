@@ -339,6 +339,26 @@ Describe 'Live abort' {
 
 Describe 'Cleanup and CLI collection boundaries' {
     BeforeEach { $script:ChaosStudyExtensionEnsured = $true }
+    It 'initializes the extension only once across separate operations' {
+        $lib = "$script:Shared/Operation.ps1"
+        $child = @"
+`$ErrorActionPreference = 'Stop'
+`$script:ExtensionChecks = 0
+function global:az {
+    `$global:LASTEXITCODE = 0
+    if (`$args[0] -eq 'extension') {
+        if (`$args[1] -eq 'list') { `$script:ExtensionChecks++; 'chaos' }
+    } else { '{"name":"ws","id":"/w"}' }
+}
+. '$lib'
+Invoke-ChaosStudyOperation -Kind workspace.get -Arguments @{cliArgs=@('--subscription','sub')} -ExpectedSchema any.v1 -Adapter local-az | Out-Null
+Invoke-ChaosStudyOperation -Kind workspace.get -Arguments @{cliArgs=@('--subscription','sub')} -ExpectedSchema any.v1 -Adapter local-az | Out-Null
+Write-Output "CHECKS=`$script:ExtensionChecks"
+"@
+        $output = & pwsh -NoProfile -NonInteractive -Command $child 2>&1
+        $LASTEXITCODE | Should -Be 0
+        ($output | Out-String) | Should -Match 'CHECKS=1\b'
+    }
     It 'reconciles one failed delete with one list: <State>' -ForEach @(
         @{ State = 'absent'; Payload = '[]'; Effective = $true }
         @{ State = 'present'; Payload = '[{"name":"cfg"}]'; Effective = $false }
