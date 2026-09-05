@@ -283,13 +283,22 @@ $(if (@($blastRows).Count -gt 0) { "<h3>Blast radius</h3>`n<table><thead><tr><th
 $(New-ChaosReportList -Items $Plan.safety.abortConditions)
 "@
 
-    $actionRows = foreach ($entry in @($RunRecord.scenarioRun.observation.actions)) {
+    $observation = $RunRecord.scenarioRun.observation
+    $actions = @()
+    $errors = @()
+    $resourcesTouched = $null
+    if ($null -ne $observation) {
+        if ($observation.PSObject.Properties.Name -contains 'actions') { $actions = @($observation.actions) }
+        if ($observation.PSObject.Properties.Name -contains 'errors') { $errors = @($observation.errors) }
+        if ($observation.PSObject.Properties.Name -contains 'resourcesTouched') { $resourcesTouched = $observation.resourcesTouched }
+    }
+    $actionRows = foreach ($entry in $actions) {
         if ($null -eq $entry) { continue }
         $touched = if ($null -ne $entry.resources) { @($entry.resources).Count } else { 'not reported' }
         "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.actionUrn))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.state))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$touched))</td></tr>"
     }
 
-    $errorRows = foreach ($entry in @($RunRecord.scenarioRun.observation.errors)) {
+    $errorRows = foreach ($entry in $errors) {
         if ($null -eq $entry) { continue }
         "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.code))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.message))</td></tr>"
     }
@@ -300,7 +309,8 @@ $(New-ChaosReportRow -Label 'Scenario run' -Value ([string]$RunRecord.scenarioRu
 $(New-ChaosReportRow -Label 'Outcome' -Value ([string]$RunRecord.scenarioRun.outcome))
 $(New-ChaosReportRow -Label 'Configuration' -Value ([string]$RunRecord.configuration.name))
 $(New-ChaosReportRow -Label 'Validation' -Value ([string]$RunRecord.configuration.validationStatus))
-$(New-ChaosReportRow -Label 'Resources touched' -Value $RunRecord.scenarioRun.observation.resourcesTouched)
+$(New-ChaosReportRow -Label 'Resources touched' -Value $resourcesTouched)
+$(New-ChaosReportRow -Label 'Run failure' -Value $(if ($RunRecord.scenarioRun.PSObject.Properties.Name -contains 'failure') { $RunRecord.scenarioRun.failure } else { $null }))
 $(New-ChaosReportRow -Label 'Mechanism proven' -Value $Findings.mechanismProven)
 $(New-ChaosReportRow -Label 'Mechanism evidence' -Value ([string]$Findings.mechanismDetail))
 $(New-ChaosReportRow -Label 'Predicate during' -Value $Findings.predicate.during)
@@ -323,9 +333,12 @@ $(New-ChaosSignalTable -Evidence $Evidence)
     $trailRows = foreach ($entry in @($CommandTrail)) {
         "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.at))</td><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$entry.command))</td><td>$(ConvertTo-ChaosHtmlText -Text ([string]$entry.note))</td></tr>"
     }
-    $artifactRows = if ($Manifest -and $Manifest.PSObject.Properties.Name -contains 'artifacts') {
-        foreach ($artifact in @($Manifest.artifacts)) {
-            "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$artifact.path))</td><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$artifact.sha256))</td></tr>"
+    $artifactRows = if ($Manifest -and $Manifest.PSObject.Properties.Name -contains 'files') {
+        $files = $Manifest.files
+        $paths = if ($files -is [System.Collections.IDictionary]) { @($files.Keys) } else { @($files.PSObject.Properties.Name) }
+        foreach ($path in ($paths | Sort-Object)) {
+            $hash = if ($files -is [System.Collections.IDictionary]) { $files[$path] } else { $files.$path }
+            "  <tr><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text $path)</td><td class=`"mono`">$(ConvertTo-ChaosHtmlText -Text ([string]$hash))</td></tr>"
         }
     } else { @() }
 

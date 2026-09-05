@@ -437,6 +437,34 @@ Write-Output "CHECKS=`$script:ExtensionChecks"
 }
 
 Describe 'Portable front door and artifacts' {
+    It 'renders a null-observation failed run with sealed artifact hashes and no changed sealed bytes' {
+        $root = "$TestDrive/report-studies"
+        $study = New-ChaosStudy -ScopeHash scope -StudyRoot $root
+        $plan = New-Plan
+        $plan | Add-Member question ([pscustomobject]@{ hypothesis = 'offline fixture'; steadyState = (ConvertFrom-ChaosSteadyState 'Availability >= 99') })
+        $plan | Add-Member readiness ([pscustomobject]@{ limitationCodes = @() })
+        $plan | Add-Member safety ([pscustomobject]@{ abortConditions = @() })
+        $plan.scope | Add-Member resourceTypes @('type')
+        $plan.scope | Add-Member discoveredResourceCount 1
+        $plan.workspace | Add-Member scopes @('/r')
+        $plan.scenario | Add-Member id /scenario
+        $plan.action | Add-Member canonicalId urn:shutdown
+        $plan.action | Add-Member displayName Shutdown
+        $plan.frozenConfigHash = Get-ChaosPlanFingerprint $plan
+        Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath (Get-ChaosArtifactFileName plan) -Content $plan | Out-Null
+        Save-ChaosRunCheckpoint -Plan $plan -Study $study -StartedAt '2026-08-30T20:00:00Z' -ConfigurationName cfg -Outcome Failed -Failure 'Synthetic offline failure'
+        $output = & pwsh -NoProfile -NonInteractive -File "$script:Skills/chaos-study-report/scripts/Invoke-ChaosStudyReport.ps1" -StudyRoot $root 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output | Out-String)
+        $manifest = Read-ChaosJsonFile "$($study.path)/manifest.json"
+        $html = Get-Content "$root/scope/report-$($study.studyId).html" -Raw
+        $html | Should -Match Inconclusive
+        $html | Should -Match 'Synthetic offline failure'
+        $html | Should -Match $manifest.contentHash
+        $html | Should -Match $manifest.files.'run-record.v3.json'
+        foreach ($file in $manifest.files.PSObject.Properties) {
+            Get-ChaosSha256 -Path (Join-Path $study.path $file.Name) | Should -Be $file.Value
+        }
+    }
     It 'persists a reportable run checkpoint before recovery can be interrupted' {
         $study = New-ChaosStudy -ScopeHash scope -StudyRoot "$TestDrive/checkpoints"
         Save-ChaosRunCheckpoint -Plan (New-Plan) -Study $study -StartedAt '2026-08-30T20:00:00Z' -ConfigurationName cfg -RunId run-1 -Outcome Failed -Failure 'signal collection failed'

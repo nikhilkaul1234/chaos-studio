@@ -52,6 +52,13 @@ if (-not $study) {
 }
 
 $studyPath = $study.path
+if ($OutputPath) {
+    $resolvedOutput = [System.IO.Path]::GetFullPath($OutputPath)
+    $sealedRoot = [System.IO.Path]::GetFullPath($studyPath).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if ($resolvedOutput.StartsWith($sealedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Choose an OutputPath outside the study directory to preserve the sealed evidence.'
+    }
+}
 $plan = Read-ChaosJsonFile -Path (Get-ChaosArtifactReader -StudyPath $studyPath -Artifact 'plan').path
 $runRecord = Read-ChaosJsonFile -Path (Get-ChaosArtifactReader -StudyPath $studyPath -Artifact 'runRecord').path
 
@@ -64,9 +71,9 @@ and this study has no run record to describe.
 }
 
 $evidence = [ordered]@{
-    pre    = @(Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'pre' 'signals.json'))
-    during = @(Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'during' 'signals.json'))
-    post   = @(Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'post' 'signals.json'))
+    pre    = ConvertTo-ChaosList (Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'pre' 'signals.json'))
+    during = ConvertTo-ChaosList (Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'during' 'signals.json'))
+    post   = ConvertTo-ChaosList (Read-ChaosJsonFile -Path (Join-Path $studyPath 'evidence' 'post' 'signals.json'))
 }
 
 $findings = Build-StudyFindings -Plan $plan -RunRecord $runRecord -Evidence $evidence
@@ -81,14 +88,14 @@ if (Test-Path -LiteralPath $trailPath) {
     )
 }
 
-$manifest = Read-ChaosJsonFile -Path (Join-Path $studyPath 'manifest.json')
+$existingManifest = Read-ChaosJsonFile -Path (Join-Path $studyPath 'manifest.json')
 
 # Adapter provenance rides in the appendix so a reviewer can re-derive the
 # request and result hashes of every operation the host executed on our behalf.
 # A hand-written report has no provenance to show.
 $provenance = @(Get-ChaosOperationProvenance -StudyPath $studyPath)
 
-$html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence -Manifest $manifest -CommandTrail $commandTrail -Provenance $provenance
+$html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence -Manifest $existingManifest -CommandTrail $commandTrail -Provenance $provenance
 
 if ($study.state -eq 'SEALED') {
     # A sealed study is immutable, so the report is rendered beside it -- in the
@@ -141,6 +148,19 @@ if (-not $NoSeal) {
         findingCount     = @($findings.findings).Count
         worstSeverity    = $(if (@($findings.findings).Count -gt 0) { @($findings.findings)[0].severity } else { 'none' })
     }) | Out-Null
+
+    # The sealed report is part of the hash set. A second, derived view can show
+    # that set without changing any sealed bytes or attempting to hash itself.
+    $manifest = Read-ChaosJsonFile -Path (Join-Path $studyPath 'manifest.json')
+    $html = New-ChaosStudyReportHtml -Plan $plan -RunRecord $runRecord -Findings $findings -Evidence $evidence `
+        -Manifest $manifest -CommandTrail $commandTrail -Provenance $provenance
+    $reportPath = if ($OutputPath) { $OutputPath } else { Join-Path (Split-Path -Parent $studyPath) "report-$($study.studyId).html" }
+    $resolvedOutput = [System.IO.Path]::GetFullPath($reportPath)
+    $sealedRoot = [System.IO.Path]::GetFullPath($studyPath).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    if ($resolvedOutput.StartsWith($sealedRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'The final report must be written outside the sealed study directory.'
+    }
+    Write-ChaosTextFile -Path $reportPath -Content $html | Out-Null
 }
 
 # Status colour follows the study verdict, because that is what the operator has
