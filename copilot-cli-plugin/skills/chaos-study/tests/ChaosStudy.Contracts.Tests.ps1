@@ -525,12 +525,17 @@ Describe 'Portable front door and artifacts' {
     It 'renders effective defaults and the full frozen dry-run contract' {
         $plan = New-Plan
         $plan.scenario.parameterSpec = @([pscustomobject]@{ name = 'duration'; default = 'PT15M' })
+        $plan.scenario.parameterSpec += [pscustomobject]@{ name = 'mode'; default = 'default-mode' }
+        $plan.scenario.parameters = @([pscustomobject]@{ key = 'mode'; value = 'explicit-mode' })
         $text = Write-ChaosStudyDryRunContract -Plan $plan -ConfigurationName cfg | Out-String
         $text | Should -Match $plan.frozenConfigHash
         $text | Should -Match PT15M
+        $text | Should -Match explicit-mode
+        $text | Should -Not -Match default-mode
         $text | Should -Match 'Cancelable'
         $text | Should -Match 'delete'
         $text | Should -Match 'fresh human'
+        (Write-ChaosStudyDryRunContract -Plan (New-Plan) -ConfigurationName cfg | Out-String) | Should -Match '\{\}'
     }
     It 'replays plural blast-radius keys and renders tags as a hashtable' {
         $source = Get-Content $script:HistoryEntry -Raw

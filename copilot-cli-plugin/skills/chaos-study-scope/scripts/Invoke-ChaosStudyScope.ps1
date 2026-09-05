@@ -731,7 +731,7 @@ if (-not $SkipDiscovery) {
 
     $preflightPlan = [pscustomobject]@{
         workspace = [pscustomobject]@{ subscriptionId = $SubscriptionId; resourceGroup = $ResourceGroup; name = $WorkspaceName }
-        scenario = [pscustomobject]@{ name = $selectedScenario.name; parameters = $scenarioParameters }
+        scenario = [pscustomobject]@{ name = $selectedScenario.name; parameters = $scenarioParameters; parameterSpec = @($selectedScenario.parameters) }
         scope = [pscustomobject]@{ blastRadius = $blastRadius }
     }
     $preflight = New-ChaosPreflightConfiguration -StudyId $study.studyId `

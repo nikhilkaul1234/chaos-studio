@@ -258,16 +258,24 @@ function Get-ChaosScenarioParameterList {
     #>
     param([Parameter(Mandatory)][object]$Plan)
 
-    $frozen = $null
-    if ($Plan.scenario.PSObject.Properties.Name -contains 'parameters') { $frozen = $Plan.scenario.parameters }
-    if ($null -eq $frozen) { return @() }
+    $effective = @{}
+    if ($Plan.scenario.PSObject.Properties.Name -contains 'parameterSpec') {
+        foreach ($spec in @($Plan.scenario.parameterSpec)) {
+            if ($null -ne $spec -and $spec.PSObject.Properties.Name -contains 'default' -and $null -ne $spec.default) {
+                $effective[[string]$spec.name] = $spec.default
+            }
+        }
+    }
+    if ($Plan.scenario.PSObject.Properties.Name -contains 'parameters') {
+        foreach ($entry in @($Plan.scenario.parameters)) {
+            if ($null -ne $entry) { $effective[[string]$entry.key] = $entry.value }
+        }
+    }
 
     $pairs = @()
-    foreach ($entry in @($frozen)) {
-        if ($null -eq $entry) { continue }
-        $key = [string]$entry.key
+    foreach ($key in ($effective.Keys | Sort-Object)) {
         if ([string]::IsNullOrWhiteSpace($key)) { continue }
-        $value = $entry.value
+        $value = $effective[$key]
         $encoded = if ($value -is [string]) {
             $value
         } elseif ($value -is [bool]) {
@@ -280,6 +288,29 @@ function Get-ChaosScenarioParameterList {
         $pairs += @{ key = $key; value = $encoded }
     }
     return $pairs
+}
+
+function Write-ChaosStudyDryRunContract {
+    param([Parameter(Mandatory)][object]$Plan, [Parameter(Mandatory)][string]$ConfigurationName)
+    $effective = [ordered]@{}
+    foreach ($pair in @(Get-ChaosScenarioParameterList -Plan $Plan)) { $effective[$pair.key] = $pair.value }
+    $parameters = ConvertTo-ChaosCanonicalJson -InputObject $effective
+    $actionType = [string]$Plan.action.actionType
+    $restoration = switch ($actionType) {
+        'Cancelable' { 'Cancellation requests restoration; post-recovery evidence must prove the system recovered.' }
+        'Continuous' { 'Cancellation stops the continuous fault; post-recovery evidence must prove the system recovered.' }
+        default { 'Cancellation does not undo a discrete or unknown action. Restoration may require operator action; post-recovery evidence must prove recovery.' }
+    }
+    @"
+Frozen configuration hash: $($Plan.frozenConfigHash)
+Effective scenario parameters (service defaults merged with frozen overrides): $parameters
+Action type: $actionType
+Restoration: $restoration
+Configuration lifecycle: create (or reuse the matching preflight) -> validate -> run -> cancel -> delete.
+Configuration: $ConfigurationName
+Dry-run creates no configuration and changes nothing. Deletion removes configuration only, not persistent RBAC grants.
+Every armed run requires fresh human approval after the exact frozen blast-radius and RBAC preview. An agent must never self-confirm.
+"@
 }
 
 function Get-ChaosBlastRadiusArgument {

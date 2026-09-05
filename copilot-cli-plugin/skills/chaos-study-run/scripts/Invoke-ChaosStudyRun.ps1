@@ -122,6 +122,7 @@ if ($DryRun) {
         filters       = $blast.filters
         exclusions    = $blast.exclusions
     }
+    Write-ChaosStudyDryRunContract -Plan $plan -ConfigurationName $configurationName
 
     Write-ChaosStudyCard -Title "Dry run - study $($study.studyId)" -Status 'info' -Body @"
 Nothing has been injected. This is what would happen.
