@@ -70,6 +70,22 @@ function Resolve-Entry {
     }
 }
 
+function ConvertTo-ChaosTagTable {
+    param([AllowNull()][AllowEmptyCollection()][object[]]$Tags)
+    $table = @{}
+    foreach ($tag in $Tags) {
+        if ($null -eq $tag -or [string]::IsNullOrWhiteSpace([string]$tag.key)) {
+            throw 'RerunNotReproducible: a tag exclusion has no key.'
+        }
+        $key = [string]$tag.key
+        if ($table.ContainsKey($key) -and $table[$key] -cne [string]$tag.value) {
+            throw "RerunNotReproducible: conflicting values for tag '$key'."
+        }
+        $table[$key] = [string]$tag.value
+    }
+    return $table
+}
+
 function Format-RerunLiteral {
     <#
     .SYNOPSIS
@@ -107,7 +123,7 @@ function Format-RerunLiteral {
         foreach ($name in $names) {
             $inner = Format-RerunLiteral -Value (Get-ChaosMember -InputObject $Value -Name $name)
             if ($null -eq $inner) { return $null }
-            $parts += "$name = $inner"
+            $parts += "'$($name.Replace("'", "''"))' = $inner"
         }
         return ('@{ ' + ($parts -join '; ') + ' }')
     }
@@ -351,7 +367,7 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
                 $key = [string](Get-ChaosMember -InputObject $parameter -Name 'key')
                 $literal = Format-RerunLiteral -Value (Get-ChaosMember -InputObject $parameter -Name 'value')
                 if ([string]::IsNullOrWhiteSpace($key) -or $null -eq $literal) { $pairs = $null; break }
-                $pairs += "$key = $literal"
+                $pairs += "'$($key.Replace("'", "''"))' = $literal"
             }
             if ($null -eq $pairs) { $unreproducible += 'the scenario parameters - one of them cannot be written back as a literal' }
             else { $lines += "    -Parameters @{ $($pairs -join '; ') } ``" }
@@ -378,11 +394,11 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
         $filters = Get-ChaosMember -InputObject $blastRadius -Name 'filters'
         $exclusions = Get-ChaosMember -InputObject $blastRadius -Name 'exclusions'
         foreach ($map in @(
-                @{ container = $filters; field = 'location'; parameter = 'FilterLocation'; list = $true }
-                @{ container = $filters; field = 'zone'; parameter = 'FilterZone'; list = $true }
-                @{ container = $filters; field = 'physicalZone'; parameter = 'FilterPhysicalZone'; list = $false }
-                @{ container = $exclusions; field = 'resource'; parameter = 'ExcludeResource'; list = $true }
-                @{ container = $exclusions; field = 'type'; parameter = 'ExcludeType'; list = $true })) {
+                @{ container = $filters; field = 'locations'; parameter = 'FilterLocation'; list = $true }
+                @{ container = $filters; field = 'zones'; parameter = 'FilterZone'; list = $true }
+                @{ container = $filters; field = 'physicalZones'; parameter = 'FilterPhysicalZone'; list = $true }
+                @{ container = $exclusions; field = 'resources'; parameter = 'ExcludeResource'; list = $true }
+                @{ container = $exclusions; field = 'types'; parameter = 'ExcludeType'; list = $true })) {
             $value = Get-ChaosMember -InputObject $map.container -Name $map.field
             if ($null -eq $value) { continue }
             if ($map.list) {
@@ -395,9 +411,9 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
                 $lines += "    -$($map.parameter) '$([string]$value -replace "'", "''")' ``"
             }
         }
-        $excludeTag = Get-ChaosMember -InputObject $exclusions -Name 'tag'
+        $excludeTag = Get-ChaosMember -InputObject $exclusions -Name 'tags'
         if ($null -ne $excludeTag) {
-            $tagLiteral = Format-RerunLiteral -Value $excludeTag
+            $tagLiteral = Format-RerunLiteral -Value (ConvertTo-ChaosTagTable -Tags @($excludeTag))
             if ($null -eq $tagLiteral) { $unreproducible += 'the tag exclusions - they cannot be written back as a literal, and omitting them would widen the blast radius' }
             elseif ($tagLiteral -ne '@{}') { $lines += "    -ExcludeTag $tagLiteral ``" }
         }
@@ -405,8 +421,8 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
         # Any blast-radius key the plan carries that this builder does not know
         # how to emit would silently widen the rerun, so it fails instead.
         foreach ($pair in @(
-                @{ container = $filters; known = @('location', 'zone', 'physicalZone'); label = 'filter' }
-                @{ container = $exclusions; known = @('resource', 'type', 'tag'); label = 'exclusion' })) {
+                @{ container = $filters; known = @('locations', 'zones', 'physicalZones'); label = 'filter' }
+                @{ container = $exclusions; known = @('resources', 'types', 'tags'); label = 'exclusion' })) {
             foreach ($name in @(Get-ChaosMemberName -InputObject $pair.container)) {
                 if ($pair.known -notcontains $name) {
                     $value = Get-ChaosMember -InputObject $pair.container -Name $name

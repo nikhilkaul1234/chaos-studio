@@ -540,6 +540,10 @@ Describe 'Portable front door and artifacts' {
         $table = ConvertTo-ChaosTagTable @([pscustomobject]@{ key = 'env'; value = 'prod' }, [pscustomobject]@{ key = 'protected'; value = '*' })
         $table | Should -BeOfType ([hashtable])
         $table.protected | Should -Be '*'
+        $table["owner's tag"] = "value with 'quote'"
+        $literal = Format-RerunLiteral $table
+        $bound = & ([scriptblock]::Create("& { param([hashtable]`$ExcludeTag) `$ExcludeTag } -ExcludeTag $literal"))
+        $bound["owner's tag"] | Should -Be "value with 'quote'"
     }
     It 'seals before loading the report manifest' {
         $source = Get-Content "$script:Skills/chaos-study-report/scripts/Invoke-ChaosStudyReport.ps1" -Raw
