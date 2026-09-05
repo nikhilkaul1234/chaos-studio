@@ -196,6 +196,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib' 'Workspace.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'Readiness.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'BriefHandoff.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study-run' 'scripts' 'lib' 'Execute.ps1')
 
 $ChaosStudyPlanVersion = 'study-plan.v3'
 
@@ -361,17 +362,14 @@ function New-ChaosPreflightConfiguration {
     #>
     param(
         [Parameter(Mandatory)][string]$StudyId,
-        [Parameter(Mandatory)][string]$ResourceGroup,
-        [Parameter(Mandatory)][string]$WorkspaceName,
-        [Parameter(Mandatory)][string]$ScenarioName,
-        [AllowNull()][AllowEmptyCollection()][object[]]$Parameters = @(),
+        [Parameter(Mandatory)][object]$Plan,
         [Parameter(Mandatory)][string]$Adapter,
         [Parameter(Mandatory)][string]$StudyPath
     )
 
     $name = Get-ChaosPreflightConfigurationName -StudyId $StudyId
-    $scoping = @('-n', $name, '-g', $ResourceGroup, '--workspace-name', $WorkspaceName, '--scenario-name', $ScenarioName)
-    $body = if (@($Parameters).Count -gt 0) { @{ parameters = @($Parameters) } } else { $null }
+    $scoping = Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $name
+    $body = Get-ChaosStudyConfigurationBody -Plan $Plan
 
     $created = Invoke-ChaosStudyOperation -Kind 'config.create' -Arguments @{ cliArgs = $scoping } -Body $body `
         -ExpectedSchema 'configuration.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config create'
@@ -730,9 +728,13 @@ $declaredVsEffective = $null
 if (-not $SkipDiscovery) {
     Write-ChaosStudyNote -Message "Validating a preflight configuration for scenario '$($selectedScenario.name)' to see which legs would actually run."
 
+    $preflightPlan = [pscustomobject]@{
+        workspace = [pscustomobject]@{ subscriptionId = $SubscriptionId; resourceGroup = $ResourceGroup; name = $WorkspaceName }
+        scenario = [pscustomobject]@{ name = $selectedScenario.name; parameters = $scenarioParameters }
+        scope = [pscustomobject]@{ blastRadius = $blastRadius }
+    }
     $preflight = New-ChaosPreflightConfiguration -StudyId $study.studyId `
-        -ResourceGroup $ResourceGroup -WorkspaceName $WorkspaceName -ScenarioName $selectedScenario.name `
-        -Parameters $scenarioParameters -Adapter $Adapter -StudyPath $study.path
+        -Plan $preflightPlan -Adapter $Adapter -StudyPath $study.path
 
     $effectiveLegs = Resolve-ChaosEffectiveLegs -ExecutionPlan $preflight.executionPlan
 

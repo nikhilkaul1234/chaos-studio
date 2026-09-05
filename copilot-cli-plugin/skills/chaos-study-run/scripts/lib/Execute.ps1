@@ -289,6 +289,17 @@ function Get-ChaosBlastRadiusArgument {
     return [pscustomobject]$result
 }
 
+function Get-ChaosStudyConfigurationBody {
+    param([Parameter(Mandatory)][object]$Plan)
+    $body = @{}
+    $parameters = @(Get-ChaosScenarioParameterList -Plan $Plan)
+    if ($parameters.Count -gt 0) { $body['parameters'] = $parameters }
+    $blast = Get-ChaosBlastRadiusArgument -Plan $Plan
+    if ($null -ne $blast.filters) { $body['filters'] = $blast.filters }
+    if ($null -ne $blast.exclusions) { $body['exclusions'] = $blast.exclusions }
+    return $body
+}
+
 function New-ChaosStudyConfiguration {
     <#
     .SYNOPSIS
@@ -314,14 +325,7 @@ function New-ChaosStudyConfiguration {
 
     $cliArgs = Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $ConfigurationName
 
-    $jsonArg = @{}
-
-    $parameters = @(Get-ChaosScenarioParameterList -Plan $Plan)
-    if ($parameters.Count -gt 0) { $jsonArg['parameters'] = $parameters }
-
-    $blast = Get-ChaosBlastRadiusArgument -Plan $Plan
-    if ($null -ne $blast.filters) { $jsonArg['filters'] = $blast.filters }
-    if ($null -ne $blast.exclusions) { $jsonArg['exclusions'] = $blast.exclusions }
+    $jsonArg = Get-ChaosStudyConfigurationBody -Plan $Plan
 
     $created = Invoke-ChaosStudyOperation -Kind 'config.create' -Arguments @{ cliArgs = $cliArgs } `
         -Body $(if ($jsonArg.Count -gt 0) { $jsonArg } else { $null }) `
