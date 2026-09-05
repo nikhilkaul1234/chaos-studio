@@ -156,7 +156,7 @@ function Get-ChaosOperationRegistry {
         'workspace.refreshRecommendations' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('workspace', 'refresh-recommendations') -Composed @(
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('workspace', 'refresh-recommendations') -Composed @(
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName')
                 ))
@@ -242,7 +242,7 @@ function Get-ChaosOperationRegistry {
         'config.validate' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'validate'))
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'validate'))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario config validate' }
         }
@@ -256,7 +256,7 @@ function Get-ChaosOperationRegistry {
         'config.fixPermissions' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'fix-permissions'))
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'fix-permissions'))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario config fix-permissions' }
         }
@@ -270,9 +270,16 @@ function Get-ChaosOperationRegistry {
         'config.delete' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'delete'))
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'delete'))
             }
             external = @{ tool = 'az-chaos'; methodHint = 'scenario config delete' }
+        }
+        'config.list' = @{
+            localAz = {
+                param($Arguments, $Body)
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'config', 'list'))
+            }
+            external = @{ tool = 'az-chaos'; methodHint = 'scenario config list' }
         }
 
         # -- Run lifecycle -----------------------------------
@@ -303,7 +310,7 @@ function Get-ChaosOperationRegistry {
         'run.cancel' = @{
             localAz  = {
                 param($Arguments, $Body)
-                Invoke-ChaosStudyAzChaos -AllowFailure -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed @(
+                Invoke-ChaosStudyAzChaos -ChaosArgs (Get-ChaosOperationCliArgs -Arguments $Arguments -Verb @('scenario', 'run', 'cancel') -Composed @(
                     '-n', (Get-ChaosOperationArg -Arguments $Arguments -Name 'runId'),
                     '-g', (Get-ChaosOperationArg -Arguments $Arguments -Name 'resourceGroup'),
                     '--workspace-name', (Get-ChaosOperationArg -Arguments $Arguments -Name 'workspaceName'),
@@ -380,7 +387,9 @@ function Invoke-ChaosLocalAzOperation {
         throw "Unknown operation kind '$Kind'. Known: $(($registry.Keys | Sort-Object) -join ', ')"
     }
     $block = $registry[$Kind].localAz
-    return (& $block $Arguments $Body)
+    $result = & $block $Arguments $Body
+    if ($result -is [array] -and $result.Count -eq 0) { return ,$result }
+    return $result
 }
 
 # -- external adapter: request construction ---------------

@@ -339,6 +339,7 @@ function Invoke-ChaosStudyOperation {
             if (-not $check.ok) {
                 throw "Operation '$Kind' returned a result that does not satisfy schema '$ExpectedSchema': $($check.problems -join '; ')"
             }
+            if ($raw -is [array] -and $raw.Count -eq 0) { return ,$raw }
             return $raw
         }
         'external' {

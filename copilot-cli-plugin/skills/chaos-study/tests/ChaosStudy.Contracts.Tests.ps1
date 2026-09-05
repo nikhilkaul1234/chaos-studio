@@ -349,8 +349,30 @@ Describe 'Cleanup and CLI collection boundaries' {
     }
     It 'records failed cleanup rather than successful residue on a mutation error' {
         Mock Invoke-ChaosStudyOperation { throw 'BadRequest' }
+        Add-ChaosExecutionResidueEntry -StudyPath $TestDrive -ConfigurationName cfg -Workspace (New-Plan).workspace -Adapter local-az | Out-Null
         $result = Invoke-ChaosResidueRemoval -StudyPath $TestDrive -Kind executionConfiguration -Id cfg -Removal { Remove-ChaosStudyConfiguration -Plan (New-Plan) -ConfigurationName cfg }
         $result.status | Should -Be failed
+        $result.recorded | Should -BeTrue
+        (Get-ChaosResidueSummary -StudyPath $TestDrive).unresolved | Should -Be 1
+    }
+    It 'propagates a real CLI error for <Kind>' -ForEach @(
+        @{ Kind = 'config.delete' }, @{ Kind = 'run.cancel' }, @{ Kind = 'config.validate' },
+        @{ Kind = 'config.fixPermissions' }, @{ Kind = 'workspace.refreshRecommendations' }
+    ) {
+        function global:az { $global:LASTEXITCODE = 1; 'BadRequest: service rejected mutation' }
+        try {
+            { Invoke-ChaosStudyOperation -Kind $Kind -Arguments @{ cliArgs = @('--subscription', 'sub') } -ExpectedSchema any.v1 -Adapter local-az } | Should -Throw '*service rejected mutation*'
+        } finally { Remove-Item Function:\global:az }
+    }
+    It 'preserves empty lists through the public plugin wrapper too' {
+        . "$script:Skills/../scripts/Invoke-AzChaos.ps1"
+        $script:ChaosExtensionEnsured = $true
+        function global:az { $global:LASTEXITCODE = 0; '[]' }
+        try {
+            $result = Invoke-AzChaos -ChaosArgs @('scenario', 'config', 'list')
+            ($null -eq $result) | Should -BeFalse
+            @($result).Count | Should -Be 0
+        } finally { Remove-Item Function:\global:az }
     }
 }
 

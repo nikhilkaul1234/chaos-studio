@@ -149,7 +149,9 @@ function Invoke-AzChaos {
 
         if (-not $stdoutText) { return $null }
         try {
-            return $stdoutText | ConvertFrom-Json
+            $parsed = ConvertFrom-Json -InputObject $stdoutText -NoEnumerate
+            if ($parsed -is [array] -and $parsed.Count -eq 0) { return ,$parsed }
+            return $parsed
         } catch {
             return $stdoutText
         }

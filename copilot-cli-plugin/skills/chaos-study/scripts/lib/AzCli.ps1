@@ -115,7 +115,10 @@ function ConvertFrom-ChaosStudyAzJson {
     param([AllowNull()][AllowEmptyString()][string]$Text)
 
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
-    try { return ($Text | ConvertFrom-Json) } catch { return $Text }
+    try { $parsed = ConvertFrom-Json -InputObject $Text -NoEnumerate }
+    catch { return $Text }
+    if ($parsed -is [array] -and $parsed.Count -eq 0) { return ,$parsed }
+    return $parsed
 }
 
 function Invoke-ChaosStudyAzChaos {
@@ -188,7 +191,9 @@ function Invoke-ChaosStudyAzChaos {
             throw "az chaos $(@($ChaosArgs) -join ' ') failed: $errorMsg`n$hint"
         }
 
-        return (ConvertFrom-ChaosStudyAzJson -Text $stdoutText)
+        $parsed = ConvertFrom-ChaosStudyAzJson -Text $stdoutText
+        if ($parsed -is [array] -and $parsed.Count -eq 0) { return ,$parsed }
+        return $parsed
     } finally {
         foreach ($file in $tempFiles) {
             if (Test-Path $file -ErrorAction SilentlyContinue) {

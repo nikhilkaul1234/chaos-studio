@@ -310,7 +310,8 @@ function Set-ChaosResidueCleanup {
         [Parameter(Mandatory)][string]$Id,
         [Parameter(Mandatory)][ValidateSet('succeeded', 'failed', 'skipped', 'unattempted')][string]$Status,
         [AllowNull()][AllowEmptyString()][string]$ErrorText = $null,
-        [AllowNull()][AllowEmptyString()][string]$Command = $null
+        [AllowNull()][AllowEmptyString()][string]$Command = $null,
+        [AllowNull()][object]$Observation = $null
     )
 
     $ledger = Get-ChaosResidueLedger -StudyPath $StudyPath
@@ -333,6 +334,7 @@ function Set-ChaosResidueCleanup {
             status      = $Status
             error       = if ([string]::IsNullOrWhiteSpace($ErrorText)) { $null } else { $ErrorText }
             command     = $command
+            observation = $Observation
         }
     }
 
@@ -371,8 +373,13 @@ function Invoke-ChaosResidueRemoval {
 
     $status = 'succeeded'
     $errorText = $null
+    $observation = $null
     try {
-        & $Removal | Out-Null
+        $observation = & $Removal
+        if ($null -ne $observation -and $observation.PSObject.Properties.Name -contains 'effective') {
+            if (-not $observation.effective) { $status = 'failed' }
+            $errorText = $observation.serviceError
+        }
     } catch {
         $status = 'failed'
         $errorText = $_.Exception.Message
@@ -380,9 +387,12 @@ function Invoke-ChaosResidueRemoval {
 
     $recorded = $false
     try {
-        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -Command $Command
+        $recorded = Set-ChaosResidueCleanup -StudyPath $StudyPath -Kind $Kind -Id $Id -Status $status -ErrorText $errorText -Command $Command -Observation $observation
     } catch {
         $recorded = $false
+        $status = 'failed'
+        $errorText = "$errorText Ledger persistence failed: $($_.Exception.Message)"
+        Write-ChaosStudyNote -Message $errorText -Level warn
     }
 
     return [pscustomobject]@{

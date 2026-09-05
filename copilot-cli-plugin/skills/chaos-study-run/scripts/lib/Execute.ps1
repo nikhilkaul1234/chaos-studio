@@ -352,9 +352,44 @@ function Remove-ChaosStudyConfiguration {
     )
 
     $cliArgs = (Get-ChaosConfigurationScopingArgument -Plan $Plan -ConfigurationName $ConfigurationName) + @('--yes')
-    return Invoke-ChaosStudyOperation -Kind 'config.delete' -Arguments @{ cliArgs = $cliArgs } `
-        -ExpectedSchema 'any.v1' -Adapter (Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter) `
-        -StudyPath $StudyPath -OperationHint 'scenario config delete'
+    $selected = Get-ChaosExecutionAdapter -Plan $Plan -Adapter $Adapter
+    $result = [ordered]@{
+        effective = $true; certainty = 'delete-reported-success'; serviceError = $null
+        reconciliation = $null
+    }
+    try {
+        Invoke-ChaosStudyOperation -Kind 'config.delete' -Arguments @{ cliArgs = $cliArgs } `
+            -ExpectedSchema 'any.v1' -Adapter $selected -StudyPath $StudyPath -OperationHint 'scenario config delete' | Out-Null
+    } catch {
+        $result.effective = $false
+        $result.certainty = 'cleanup-uncertain'
+        $result.serviceError = $_.Exception.Message
+        $reconciliation = [ordered]@{ state = 'inconclusive'; error = $null }
+        # Exactly one read after an ambiguous DELETE. Never repeat the mutation.
+        try {
+            $listArgs = @('-g', $Plan.workspace.resourceGroup, '--workspace-name', $Plan.workspace.name,
+                '--scenario-name', $Plan.scenario.name, '--subscription', $Plan.workspace.subscriptionId)
+            $listed = Invoke-ChaosStudyOperation -Kind 'config.list' -Arguments @{ cliArgs = $listArgs } `
+                -ExpectedSchema 'any.v1' -Adapter $selected -StudyPath $StudyPath -OperationHint 'reconcile config delete'
+            $items = $null
+            if ($listed -is [array]) { $items = $listed }
+            elseif ($null -ne $listed -and $listed.PSObject.Properties.Name -contains 'value' -and $listed.value -is [array] -and
+                -not ($listed.PSObject.Properties.Name -contains 'nextLink' -and $listed.nextLink)) { $items = $listed.value }
+            elseif ($null -ne $listed -and $listed.PSObject.Properties.Name -contains 'name') { $items = @($listed) }
+            if ($null -ne $items) {
+                $match = @($items | Where-Object { $null -ne $_ -and $_.PSObject.Properties.Name -contains 'name' -and $_.name -eq $ConfigurationName })
+                $unnamed = @($items | Where-Object { $null -eq $_ -or $_.PSObject.Properties.Name -notcontains 'name' -or -not $_.name })
+                if ($match.Count) { $reconciliation.state = 'present' }
+                elseif ($unnamed.Count -eq 0) {
+                    $reconciliation.state = 'absent'
+                    $result.effective = $true
+                    $result.certainty = 'effective-with-service-error'
+                }
+            }
+        } catch { $reconciliation.error = $_.Exception.Message }
+        $result.reconciliation = [pscustomobject]$reconciliation
+    }
+    return [pscustomobject]$result
 }
 
 # -- Validation and permissions --------------------------------------------
