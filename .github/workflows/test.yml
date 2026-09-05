@@ -34,6 +34,9 @@ jobs:
         shell: pwsh
         run: |
           $config = New-PesterConfiguration
+          if (-not (Test-Path './copilot-cli-plugin/skills/chaos-study/tests/*.Tests.ps1')) {
+            throw 'The chaos-study safety contract suite must be present.'
+          }
           $config.Run.Path = './copilot-cli-plugin/skills'
           $config.Run.Exit = $true
           $config.TestResult.Enabled = $true
