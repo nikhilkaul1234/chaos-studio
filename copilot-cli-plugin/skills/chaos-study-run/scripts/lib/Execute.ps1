@@ -129,6 +129,13 @@ execution stops here.
 
 # -- Consent ---------------------------------------------------------------
 
+function Test-ChaosPlanLiveDiscovery {
+    param([Parameter(Mandatory)][object]$Plan)
+    return ($Plan.action.PSObject.Properties.Name -contains 'source' -and
+        $Plan.action.source -eq 'live-discovery' -and
+        $null -ne $Plan.scope.projectedResourceCount)
+}
+
 function Get-ChaosConsentPhrase {
     <#
     .SYNOPSIS

@@ -168,6 +168,13 @@ exact plan. Type it exactly:
 
 # -- Armed path ------------------------------------------------------------
 
+if (-not (Test-ChaosPlanLiveDiscovery -Plan $plan)) {
+    Write-ChaosStudyFailure -Title 'Fresh discovery is required' `
+        -Message 'Offline or unresolved plans cannot authorize injection, including with -Force.' `
+        -Remediation 'Run chaos-study-scope with live discovery and review the newly frozen blast radius.'
+    exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
+}
+
 Assert-ChaosConsent -Plan $plan -Consent $Consent | Out-Null
 
 if ($plan.discovery.region -and $plan.scope.region -and -not $Force) {
