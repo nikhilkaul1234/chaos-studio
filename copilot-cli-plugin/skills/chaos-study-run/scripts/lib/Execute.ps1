@@ -279,8 +279,10 @@ function Get-ChaosBlastRadiusArgument {
         if ($null -eq $source) { continue }
 
         $projected = [ordered]@{}
-        foreach ($property in @($source.PSObject.Properties)) {
-            $value = $property.Value
+        $names = if ($source -is [System.Collections.IDictionary]) { @($source.Keys) } else { @($source.PSObject.Properties.Name) }
+        foreach ($name in $names) {
+            if ($source -is [System.Collections.IDictionary]) { $value = $source[$name] }
+            else { $value = $source.$name }
             if ($null -eq $value) { continue }
             if ($value -is [string]) {
                 if ([string]::IsNullOrWhiteSpace($value)) { continue }
@@ -289,7 +291,7 @@ function Get-ChaosBlastRadiusArgument {
             } elseif ($value -is [System.Collections.IEnumerable]) {
                 if (@($value).Count -eq 0) { continue }
             }
-            $projected[$property.Name] = $value
+            $projected[$name] = $value
         }
         if ($projected.Count -gt 0) { $result[$side] = [pscustomobject]$projected }
     }

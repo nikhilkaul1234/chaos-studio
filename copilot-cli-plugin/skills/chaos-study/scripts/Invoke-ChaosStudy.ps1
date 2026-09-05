@@ -138,6 +138,9 @@ param(
 
     # Blast radius, forwarded to the scenario configuration.
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$FilterLocation = @(),
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$FilterZone = @(),
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$FilterPhysicalZone = @(),
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][hashtable]$ExcludeTag,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$ExcludeResource = @(),
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$ExcludeType = @(),
 
@@ -197,36 +200,25 @@ function Invoke-ChaosPhase {
         [Parameter(Mandatory)][hashtable]$Arguments
     )
 
-    $argv = [System.Collections.Generic.List[string]]::new()
-    $argv.Add('-NoProfile')
-    $argv.Add('-File')
-    $argv.Add($Script)
-    foreach ($key in ($Arguments.Keys | Sort-Object)) {
-        $value = $Arguments[$key]
-        if ($null -eq $value) { continue }
-        if ($value -is [switch]) {
-            if ($value.IsPresent) { $argv.Add("-$key") }
-            continue
+    $payloadPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $bound = @{}
+        foreach ($key in $Arguments.Keys) {
+            $value = $Arguments[$key]
+            if ($value -is [switch]) { $bound[$key] = $value.IsPresent }
+            else { $bound[$key] = $value }
         }
-        if ($value -is [bool]) {
-            $argv.Add("-${key}:`$$($value.ToString().ToLowerInvariant())")
-            continue
-        }
-        if ($value -is [array]) {
-            if ($value.Count -eq 0) { continue }
-            $argv.Add("-$key")
-            $argv.Add(($value -join ','))
-            continue
-        }
-        $argv.Add("-$key")
-        $argv.Add([string]$value)
+        # CLIXML preserves collections, nested maps, booleans and numeric culture.
+        @{ Script = $Script; Arguments = $bound } | Export-Clixml -LiteralPath $payloadPath -Depth ([int]::MaxValue)
+        $literalPath = $payloadPath.Replace("'", "''")
+        $command = "`$ErrorActionPreference = 'Stop'; `$p = Import-Clixml -LiteralPath '$literalPath'; `$a = `$p.Arguments; `$global:LASTEXITCODE = 0; & `$p.Script @a; exit `$LASTEXITCODE"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        Write-ChaosStudyNote -Message "phase: $Name"
+        & pwsh -NoProfile -NonInteractive -EncodedCommand $encoded | ForEach-Object { Write-Host $_ }
+        return $LASTEXITCODE
+    } finally {
+        Remove-Item -LiteralPath $payloadPath -Force
     }
-
-    Write-ChaosStudyNote -Message "phase: $Name"
-    # The child's output is written straight through rather than returned, so the
-    # function's only return value is the exit code.
-    & pwsh @argv | ForEach-Object { Write-Host $_ }
-    return $LASTEXITCODE
 }
 
 function Stop-OnResumableOperation {
@@ -586,26 +578,24 @@ if ($PSBoundParameters.ContainsKey('VulnerableWindowSeconds')) { $scopeArgs['Vul
 if ($PSBoundParameters.ContainsKey('EligibleFraction')) { $scopeArgs['EligibleFraction'] = $EligibleFraction }
 if ($AcceptWeakExercise) { $scopeArgs['AcceptWeakExercise'] = [switch]::Present }
 if ($FilterLocation.Count -gt 0) { $scopeArgs['FilterLocation'] = $FilterLocation }
+if ($FilterZone.Count -gt 0) { $scopeArgs['FilterZone'] = $FilterZone }
+if ($FilterPhysicalZone.Count -gt 0) { $scopeArgs['FilterPhysicalZone'] = $FilterPhysicalZone }
+if ($ExcludeTag) { $scopeArgs['ExcludeTag'] = $ExcludeTag }
 if ($ExcludeResource.Count -gt 0) { $scopeArgs['ExcludeResource'] = $ExcludeResource }
 if ($ExcludeType.Count -gt 0) { $scopeArgs['ExcludeType'] = $ExcludeType }
 if ($SkipDiscovery) { $scopeArgs['SkipDiscovery'] = [switch]::Present }
 if ($Adapter) { $scopeArgs['Adapter'] = $Adapter }
 if ($AcceptPartialScenario) { $scopeArgs['AcceptPartialScenario'] = $AcceptPartialScenario }
-if ($Parameters -and $Parameters.Count -gt 0) {
-    # Hashtables cannot cross the pwsh -File boundary, so parameterised scenarios
-    # are planned by calling the scope skill directly rather than through this chain.
-    Write-ChaosStudyFailure -Title 'Use the scope skill for parameterised scenarios' -Message @"
--Parameters cannot be forwarded through the chained entry point.
+if ($Parameters) { $scopeArgs['Parameters'] = $Parameters }
 
-Plan the study with the scope skill directly, then continue here or with the run
-skill against the resulting study id:
-
-  chaos-study-scope -Scenario $Scenario -Action $Action -Parameters @{ ... }
-"@
-    exit (Get-ChaosStudyExitCode -Name 'Error')
+$studyIdOutput = [System.IO.Path]::GetTempFileName()
+try {
+    $scopeArgs['StudyIdOutputPath'] = $studyIdOutput
+    $scopeExit = Invoke-ChaosPhase -Name 'chaos-study-scope' -Script $scopeScript -Arguments $scopeArgs
+    $plannedStudyId = ([string](Get-Content -LiteralPath $studyIdOutput -Raw)).Trim()
+} finally {
+    Remove-Item -LiteralPath $studyIdOutput -Force
 }
-
-$scopeExit = Invoke-ChaosPhase -Name 'chaos-study-scope' -Script $scopeScript -Arguments $scopeArgs
 Stop-OnResumableOperation -Name 'chaos-study-scope' -ExitCode $scopeExit
 
 if ($scopeExit -eq (Get-ChaosStudyExitCode -Name 'InsufficientExposure')) {
@@ -658,7 +648,7 @@ those resources. A failure here is a real answer, not an obstacle to work around
 "@
 
 $store = if ($StudyRoot) { $StudyRoot } else { (Get-ChaosStudyRoot).path }
-$latest = Find-ChaosStudy -StudyId 'latest' -StudyRoot $store
+$latest = if ($plannedStudyId) { Find-ChaosStudy -StudyId $plannedStudyId -StudyRoot $store } else { $null }
 if (-not $latest) {
     Write-ChaosStudyFailure -Title 'Plan not found' -Message 'Scoping reported success but no study was recorded. Refusing to continue.'
     exit (Get-ChaosStudyExitCode -Name 'Error')

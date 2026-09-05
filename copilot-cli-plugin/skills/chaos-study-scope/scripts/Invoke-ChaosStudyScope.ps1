@@ -165,6 +165,7 @@ param(
     [hashtable]$ExcludeTag,
 
     [string]$StudyRoot,
+    [string]$StudyIdOutputPath,
 
     # Plan without probing Azure. The plan carries limitation L10 and is not
     # evidence that the study can run.
@@ -945,6 +946,9 @@ $plan['frozenConfigHash'] = Get-ChaosDigest -InputObject $plan
 # -- Persist ---------------------------------------------------------------
 
 Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath (Get-ChaosArtifactFileName -Artifact 'plan') -Content $plan | Out-Null
+if ($StudyIdOutputPath) {
+    Write-ChaosTextFile -Path $StudyIdOutputPath -Content $study.studyId | Out-Null
+}
 
 Add-ChaosCommandTrailEntry -StudyPath $study.path -Command 'chaos-study-scope' `
     -Arguments ([ordered]@{

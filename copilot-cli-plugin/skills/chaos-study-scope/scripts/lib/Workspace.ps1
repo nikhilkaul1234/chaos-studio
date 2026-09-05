@@ -416,6 +416,7 @@ function ConvertTo-ChaosScopedResourceRecord {
         resourceType = $resourceType
         location     = $location
         zones        = @($zones)
+        tags         = if ($null -ne (& $read $Resource 'tags')) { & $read $Resource 'tags' } else { & $read $properties 'tags' }
     }
 }
 
@@ -530,7 +531,7 @@ function New-ChaosBlastRadius {
         [AllowNull()][AllowEmptyCollection()][string[]]$PhysicalZones,
         [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeResources,
         [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeTypes,
-        [AllowNull()][AllowEmptyCollection()][string[]]$ExcludeTags
+        [AllowNull()][hashtable]$ExcludeTags
     )
 
     $zoneList = @(@($Zones) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -560,7 +561,12 @@ function New-ChaosBlastRadius {
 
     $resourceList = @(@($ExcludeResources) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $typeList = @(@($ExcludeTypes) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-    $tagList = @(@($ExcludeTags) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $tagList = @(if ($ExcludeTags) {
+        foreach ($key in ($ExcludeTags.Keys | Sort-Object)) {
+            if ([string]::IsNullOrWhiteSpace($key)) { throw 'Tag exclusion keys cannot be empty.' }
+            [pscustomobject]@{ key = [string]$key; value = [string]$ExcludeTags[$key] }
+        }
+    })
 
     $exclusions = $null
     if ($resourceList.Count -gt 0 -or $typeList.Count -gt 0 -or $tagList.Count -gt 0) {
@@ -627,7 +633,7 @@ function Resolve-ChaosBlastRadiusResource {
     )
 
     $candidates = @(@($ScopedResources) | Where-Object { $null -ne $_ })
-    if ($null -eq $BlastRadius) { return , @($candidates) }
+    if ($null -eq $BlastRadius) { return $candidates }
 
     $filters = Get-ChaosBlastRadiusMember -Container $BlastRadius -Name 'filters'
     if ($null -ne $filters) {
@@ -668,7 +674,20 @@ function Resolve-ChaosBlastRadiusResource {
         }
     }
 
-    return , @($candidates)
+    $blockedTags = @(Get-ChaosBlastRadiusMember -Container $exclusions -Name 'tags')
+    if (@($blockedTags | Where-Object { $null -ne $_ }).Count -gt 0 -and
+        @($candidates | Where-Object { $null -eq (Get-ChaosBlastRadiusMember -Container $_ -Name tags) }).Count -gt 0) {
+        Write-ChaosStudyNote -Level warn -Message 'Some discovered resources have no tag data. Their tag exclusions are service-side only; the local resource preview conservatively retains them.'
+    }
+    foreach ($tag in $blockedTags) {
+        if ($null -eq $tag) { continue }
+        $candidates = @($candidates | Where-Object {
+            $tags = Get-ChaosBlastRadiusMember -Container $_ -Name tags
+            $value = Get-ChaosBlastRadiusMember -Container $tags -Name $tag.key
+            $null -eq $value -or ([string]$tag.value -ne '*' -and [string]$value -cne [string]$tag.value)
+        })
+    }
+    return $candidates
 }
 
 # -- 4. Scenarios ----------------------------------------------------------

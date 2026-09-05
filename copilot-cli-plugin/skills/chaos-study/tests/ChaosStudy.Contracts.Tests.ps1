@@ -129,7 +129,9 @@ Describe 'Frozen scope and transport' {
             [pscustomobject]@{ status = 'Succeeded' }
         }
         $plan = New-Plan
-        New-ChaosPreflightConfiguration -StudyId test -Plan $plan -Adapter local-az -StudyPath $TestDrive | Out-Null
+        $preflightPlan = New-Plan
+        $preflightPlan.scope.blastRadius = New-ChaosBlastRadius -Locations westus2 -ExcludeResources /r/excluded
+        New-ChaosPreflightConfiguration -StudyId test -Plan $preflightPlan -Adapter local-az -StudyPath $TestDrive | Out-Null
         New-ChaosStudyConfiguration -Plan $plan -ConfigurationName cfg | Out-Null
         $script:bodies.Count | Should -Be 2
         foreach ($body in $script:bodies) {
