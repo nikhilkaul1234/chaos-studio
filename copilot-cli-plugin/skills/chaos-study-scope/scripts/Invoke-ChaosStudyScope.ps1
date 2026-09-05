@@ -939,6 +939,7 @@ $plan = [ordered]@{
     }
 }
 
+$plan = Protect-ChaosObject -InputObject $plan
 $plan['frozenConfigHash'] = Get-ChaosDigest -InputObject $plan
 
 # -- Persist ---------------------------------------------------------------
