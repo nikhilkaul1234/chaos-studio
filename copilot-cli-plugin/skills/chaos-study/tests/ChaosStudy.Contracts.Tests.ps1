@@ -338,6 +338,39 @@ New-ChaosPreflightConfiguration -StudyId test -Plan `$plan -Adapter local-az -St
 }
 
 Describe 'Live abort' {
+    It 'executes the actual entry-point monitoring and cancellation blocks without starting a run' {
+        $plan = New-Plan
+        $plan | Add-Member safety (New-AbortPlan).safety
+        $runId = 'synthetic-already-running'
+        $studyPath = (New-ChaosStudy -ScopeHash scope -StudyRoot "$TestDrive/monitor").path
+        $Adapter = 'local-az'; $PollSeconds = 20
+        $sources = @('metrics:Availability')
+        $injectStart = ConvertTo-ChaosUtcIso ([datetime]::UtcNow.AddSeconds(-1))
+        $abortMonitor = @{ state = [ordered]@{}; checks = [System.Collections.Generic.List[object]]::new() }
+        $abort = $null; $cancelAttempted = $false
+        Add-ChaosScenarioRunResidueEntry -StudyPath $studyPath -RunId $runId -Workspace $plan.workspace -ScenarioName scenario -ConfigurationName cfg -Adapter local-az | Out-Null
+        Mock Invoke-ChaosSignalCollection {
+            return ,@(New-ChaosSignalResult -Source metrics:Availability -Window abort-check -Values @([ordered]@{ value = 95 }))
+        }
+        Mock Invoke-ChaosStudyOperation {
+            if ($Kind -eq 'run.show') { return [pscustomobject]@{ status = 'Running' } }
+            if ($Kind -eq 'run.cancel') { return [pscustomobject]@{ status = 'Cancelling' } }
+            throw "No start or other mutation is permitted: $Kind"
+        }
+        Mock Start-Sleep { throw 'Abort must not sleep again' }
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($script:RunEntry, [ref]$null, [ref]$null)
+        $wait = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$waited' }, $true)[0]
+        $cancel = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.IfStatementAst] -and $n.Clauses[0].Item1.Extent.Text -eq '$null -ne $waited.abort' }, $true))
+        $cancel.Count | Should -Be 1
+        . ([scriptblock]::Create($wait.Extent.Text))
+        . ([scriptblock]::Create($cancel[0].Extent.Text))
+        $cancelAttempted | Should -BeTrue
+        $abort.kind | Should -Be predicate
+        (Read-ChaosJsonFile "$studyPath/evidence/during/abort-checks.json").triggered | Should -BeTrue
+        (Read-ChaosJsonFile "$studyPath/evidence/during/abort-cancellation.json").status | Should -Be succeeded
+        Should -Invoke Invoke-ChaosStudyOperation -Times 1 -ParameterFilter { $Kind -eq 'run.cancel' }
+        Should -Invoke Start-Sleep -Times 0
+    }
     It 'stops polling on a real signal breach and immediately cancels through the adapter' {
         $plan = New-Plan
         $plan | Add-Member safety (New-AbortPlan).safety
