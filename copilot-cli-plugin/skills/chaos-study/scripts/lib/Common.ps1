@@ -117,6 +117,15 @@ function Get-ChaosStudyExitCode {
 }
 
 # -- Output helpers ---------------------------------------
+function Assert-ChaosExternalReadOnly {
+    param([AllowNull()][string]$Adapter, [bool]$ExecutionRequested)
+    if ($Adapter -ne 'external' -or -not $ExecutionRequested) { return }
+    Write-ChaosStudyFailure -Title 'External execution is unsupported' `
+        -Message 'The external adapter supports read-only phases only. Armed runs, consent, permission approval, and mutating operations are unsupported.' `
+        -Remediation 'Use an authenticated local-az host for preflight and execution, with fresh live discovery and human approval.'
+    exit (Get-ChaosStudyExitCode -Name AdapterUnavailable)
+}
+
 function Write-ChaosStudyNote {
     param(
         [Parameter(Mandatory)][string]$Message,

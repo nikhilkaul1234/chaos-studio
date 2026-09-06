@@ -53,6 +53,8 @@ $sharedLib = Join-Path $PSScriptRoot '..' '..' 'chaos-study' 'scripts' 'lib'
 . (Join-Path $sharedLib 'Exercise.ps1')
 . (Join-Path $libDir 'Signals.ps1')
 . (Join-Path $libDir 'Execute.ps1')
+$executionRequested = -not $DryRun -or $PSBoundParameters.ContainsKey('Consent') -or $PSBoundParameters.ContainsKey('ApprovePermissions')
+Assert-ChaosExternalReadOnly -Adapter $Adapter -ExecutionRequested $executionRequested
 
 # -- Locate the study ------------------------------------------------------
 
@@ -69,6 +71,9 @@ Could not find a study matching '$StudyId'.
 
 $studyPath = $study.path
 $plan = Read-ChaosJsonFile -Path (Get-ChaosArtifactReader -StudyPath $studyPath -Artifact 'plan').path
+if (-not $Adapter) {
+    Assert-ChaosExternalReadOnly -Adapter (Get-ChaosMember -InputObject $plan -Name adapter) -ExecutionRequested $executionRequested
+}
 
 if (-not $plan) {
     Write-ChaosStudyFailure -Title 'Study has no plan' -Message @"

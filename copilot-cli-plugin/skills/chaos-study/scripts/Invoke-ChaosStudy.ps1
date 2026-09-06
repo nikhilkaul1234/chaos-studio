@@ -178,6 +178,7 @@ $ErrorActionPreference = 'Stop'
 $libDir = Join-Path $PSScriptRoot 'lib'
 . (Join-Path $libDir 'Common.ps1')
 . (Join-Path $libDir 'Study.ps1')
+Assert-ChaosExternalReadOnly -Adapter $Adapter -ExecutionRequested (-not $DryRun -or $PSBoundParameters.ContainsKey('Consent') -or $PSBoundParameters.ContainsKey('ApprovePermissions'))
 
 $skillsRoot = Join-Path $PSScriptRoot '..' '..'
 $designScript = Join-Path $skillsRoot 'chaos-study-design' 'scripts' 'Invoke-ChaosStudyDesign.ps1'

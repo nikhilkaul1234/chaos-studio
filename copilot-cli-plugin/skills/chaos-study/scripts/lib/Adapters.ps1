@@ -553,6 +553,12 @@ function Invoke-ChaosExternalOperation {
         [Parameter(Mandatory)][string]$StudyPath,
         [string]$OperationHint
     )
+    $readKinds = @(
+        'workspace.get', 'workspace.showEvaluation', 'resource.list', 'roleAssignments.list',
+        'resource.get', 'actions.list', 'scenarios.list', 'config.showValidation',
+        'config.showPermissionFix', 'config.list', 'run.show', 'metrics.query', 'logs.query', 'auth.probe'
+    )
+    Assert-ChaosExternalReadOnly -Adapter external -ExecutionRequested ($Kind -notin $readKinds)
     $registry = Get-ChaosOperationRegistry
     if (-not $registry.ContainsKey($Kind)) {
         throw "Unknown operation kind '$Kind'. Known: $(($registry.Keys | Sort-Object) -join ', ')"
