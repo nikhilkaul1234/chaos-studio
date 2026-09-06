@@ -75,6 +75,7 @@ $script:ChaosLimitationText = [ordered]@{
     L13 = 'Action timing approximate - the exact action-active window was not reported, so evidence is aligned to the observation window instead'
     L14 = 'Unresolved residue - resources or grants created by this study could not be confirmed removed'
     L15 = 'Design provisional - candidate hypotheses were ranked without live action discovery, so platform availability is unconfirmed'
+    L16 = 'Conservative zone projection - candidates with unknown local zones were retained; service filtering and executable-target metadata govern the zone boundary'
 }
 
 function Get-ChaosLimitationText {

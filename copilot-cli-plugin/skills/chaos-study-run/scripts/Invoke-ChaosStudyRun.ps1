@@ -333,7 +333,7 @@ and you will be asked again.
         exit (Get-ChaosStudyExitCode -Name 'PermissionApprovalRequired')
     }
 
-    Assert-ChaosConfigurationValidated -Validation $validation -ConfigurationName $configurationName | Out-Null
+    Assert-ChaosConfigurationValidated -Validation $validation -ConfigurationName $configurationName -PermissionFix $permissionFix | Out-Null
 
     Write-ChaosStudyNote -Message "Collecting baseline evidence over the $($plan.windows.baselineMinutes) minutes before this run began."
     $preEvidence = Invoke-ChaosSignalCollection -Plan $plan -Window $preWindow -Sources $sources -Adapter $Adapter -StudyPath $studyPath

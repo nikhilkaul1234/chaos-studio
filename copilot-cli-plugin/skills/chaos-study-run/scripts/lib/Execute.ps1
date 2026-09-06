@@ -1155,15 +1155,13 @@ function Assert-ChaosConfigurationValidated {
         names neither the resource nor the missing permission, which is far
         harder to diagnose than a refusal here.
 
-        By the time this runs, Resolve-ChaosConfigurationValidation has already
-        previewed and applied whatever grants the service reported as missing.
-        So reaching this gate means repair was either impossible or
-        insufficient, and the remediation says so rather than suggesting a
-        switch that would repeat what already happened.
+        PermissionFix describes operations actually attempted before this gate.
+        Error messages mentioning RBAC do not prove a permission repair ran.
     #>
     param(
         [AllowNull()][object]$Validation,
-        [Parameter(Mandatory)][string]$ConfigurationName
+        [Parameter(Mandatory)][string]$ConfigurationName,
+        [AllowNull()][object]$PermissionFix
     )
 
     $status = Get-ChaosValidationStatus -Validation $Validation
@@ -1179,14 +1177,29 @@ function Assert-ChaosConfigurationValidated {
         '  (the service reported no error detail)'
     }
 
-    $looksLikePermissions = @($errors | Where-Object {
-        "$($_.code) $($_.message)" -match '(?i)(permission|authoriz|forbidden|rbac|roleassignment)'
-    }).Count -gt 0
-
-    $remediation = if ($looksLikePermissions) {
+    $attempted = (Get-ChaosMember -InputObject $PermissionFix -Name attempted) -eq $true
+    $authoritative = (Get-ChaosMember -InputObject $PermissionFix -Name applicable) -eq $true -and
+        -not [string]::IsNullOrWhiteSpace([string](Get-ChaosMember -InputObject $PermissionFix -Name grantSetHash))
+    $applied = Get-ChaosMember -InputObject $PermissionFix -Name applied
+    $grantsApplied = $attempted -and $authoritative -and
+        (Get-ChaosMember -InputObject $PermissionFix -Name approved) -eq $true -and
+        (Get-ChaosMember -InputObject $applied -Name whatIfMode) -eq $false -and
+        (Get-ChaosMember -InputObject $applied -Name succeeded) -gt 0
+    $correlation = Get-ChaosMember -InputObject $Validation -Name correlationId
+    if (-not $correlation) { $correlation = Get-ChaosMember -InputObject (Get-ChaosMember -InputObject $Validation -Name properties) -Name correlationId }
+    $correlationText = if ($correlation) { "correlation $correlation" } else { 'the captured request diagnostics (the response did not report a correlation id)' }
+    $remediation = if ($grantsApplied) {
         'Chaos Studio already previewed and applied the grants it reported as missing, and validation still failed. Role assignments can take a few minutes to propagate, so retrying often succeeds; if it does not, grant the workspace identity the roles named above manually, or ask someone with User Access Administrator on the scope to run az chaos scenario config fix-permissions.'
+    } elseif (-not $attempted -and -not (Test-ChaosValidationRepairable -Validation $Validation)) {
+        "Validation failed with a non-repairable service error; no permission changes were attempted. Retry later or escalate with $correlationText. Do not use permission repair to work around a service error."
+    } elseif (-not $attempted) {
+        'No permission changes were attempted. Obtain an authoritative permission preview and fresh human approval before applying grants.'
+    } elseif (-not $authoritative) {
+        'The permission preview was not authoritative; no permission changes were applied. Obtain a complete what-if result before requesting approval.'
+    } elseif ((Get-ChaosMember -InputObject $PermissionFix -Name approved) -eq $true) {
+        "Permission repair was attempted, but application of grants was not confirmed. Inspect the recorded permission-fix result and escalate with $correlationText."
     } else {
-        'Re-run chaos-study-scope against a scope the workspace can actually reach, then plan again.'
+        'Only a permission preview was obtained; no permission changes were applied. Review the exact grants and request fresh human approval.'
     }
 
     Write-ChaosStudyFailure -Title 'Scenario configuration did not validate' -Message @"

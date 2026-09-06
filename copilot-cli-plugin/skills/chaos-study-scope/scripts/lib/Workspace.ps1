@@ -621,6 +621,17 @@ function Get-ChaosBlastRadiusMember {
     return $Container.$Name
 }
 
+function Get-ChaosZoneRetentionWarning {
+    param([AllowEmptyCollection()][object[]]$ScopedResources, [AllowNull()][object]$BlastRadius)
+    $filters = Get-ChaosBlastRadiusMember -Container $BlastRadius -Name filters
+    if ($null -eq (Get-ChaosBlastRadiusMember -Container $filters -Name zones)) { return $null }
+    $unknown = @($ScopedResources | Where-Object {
+        @(Get-ChaosBlastRadiusMember -Container $_ -Name zones | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0
+    })
+    if ($unknown.Count -eq 0) { return $null }
+    return 'Candidates with unknown local zone data are retained; the service must apply the zone filter and executable target metadata must satisfy it before approval.'
+}
+
 function Resolve-ChaosBlastRadiusResource {
     <#
     .SYNOPSIS
@@ -658,12 +669,8 @@ function Resolve-ChaosBlastRadiusResource {
         $wantedZones = Get-ChaosBlastRadiusMember -Container $filters -Name 'zones'
         if ($null -ne $wantedZones) {
             $zoneSet = @(@($wantedZones) | ForEach-Object { [string]$_ })
-            $unknownZones = @($candidates | Where-Object {
-                @(Get-ChaosBlastRadiusMember -Container $_ -Name zones | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0
-            })
-            if ($unknownZones.Count -gt 0) {
-                Write-ChaosStudyNote -Level warn -Message 'Some discovered resources have no zone data. The local resource preview conservatively retains them; the service must apply the zone filter and executable target metadata must satisfy it before approval.'
-            }
+            $retentionWarning = Get-ChaosZoneRetentionWarning -ScopedResources $candidates -BlastRadius $BlastRadius
+            if ($retentionWarning) { Write-ChaosStudyNote -Level warn -Message $retentionWarning }
             $candidates = @($candidates | Where-Object {
                     $owned = @(Get-ChaosBlastRadiusMember -Container $_ -Name zones | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
                     $owned.Count -eq 0 -or @($owned | Where-Object { $zoneSet -contains $_ }).Count -gt 0

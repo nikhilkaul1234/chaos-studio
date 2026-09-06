@@ -717,6 +717,12 @@ $readiness = Invoke-ChaosReadinessGates -Action $selectedAction `
 
 $limitationCodes = @($readiness.limitationCodes)
 if ($SkipDiscovery -and $limitationCodes -notcontains 'L10') { $limitationCodes += 'L10' }
+$zoneRetentionWarning = Get-ChaosZoneRetentionWarning -ScopedResources $projected -BlastRadius $blastRadius
+if ($zoneRetentionWarning) {
+    $limitationCodes += 'L16'
+    $readiness.gates += New-ChaosReadinessGate -Id zone-retention -Title 'Local zone projection is conservative' `
+        -Status unknown -Severity advisory -Detail $zoneRetentionWarning -LimitationCode L16
+}
 
 foreach ($gate in $readiness.gates) {
     $marker = switch ($gate.status) { 'pass' { 'ok' } 'fail' { 'FAIL' } default { '??' } }
@@ -1064,7 +1070,7 @@ $summary = @(
 Write-ChaosStudyCard -Title 'Study planned - nothing has been injected' -Body $summary
 if (-not $SkipDiscovery) {
     Write-ChaosStudyCard -Title 'Frozen blast radius and RBAC preview - human approval required' `
-        -Body "An agent must not self-confirm. Review this exact preview before supplying either approval phrase.`n$(Format-ChaosDeclaredZoneClaim -Plan $persistedPlan)`n$(Format-ChaosTelemetryLag -Plan $persistedPlan)" `
+        -Body "An agent must not self-confirm. Review this exact preview before supplying either approval phrase.`n$(Format-ChaosDeclaredZoneClaim -Plan $persistedPlan)`n$(Format-ChaosTelemetryLag -Plan $persistedPlan)$(if ($zoneRetentionWarning) { "`nL16: $zoneRetentionWarning" })" `
         -JsonPreview ($approvalPreview | ConvertTo-Json -Depth 32)
 }
 

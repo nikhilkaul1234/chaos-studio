@@ -99,6 +99,11 @@ Describe 'G3 live-shaped discovery through preflight' {
         $planFile = @(Get-ChildItem $root -Recurse -Filter study-plan.v4.json)[0]
         $plan = Read-ChaosJsonFile $planFile.FullName
         $plan.scope.projectedResourceCount | Should -Be 1
+        $plan.readiness.limitationCodes | Should -Contain L16
+        $retentionGate = @($plan.readiness.gates | Where-Object id -eq 'zone-retention')
+        $retentionGate.Count | Should -Be 1
+        $retentionGate[0].severity | Should -Be advisory
+        ($output | Out-String) | Should -Match 'L16:.*unknown.*zone'
         $plan.scope.blastRadius.filters.zones | Should -Be @('1')
         $approval = Read-ChaosJsonFile (Join-Path $planFile.Directory.FullName 'approval-preview.v1.json')
         $approval.configuration.filters.zones | Should -Be @('1')
