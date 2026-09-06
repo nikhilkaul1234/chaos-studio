@@ -61,6 +61,9 @@ $ChaosOperationResultSchemas = @{
     'validation.v1'       = @(
         @{ name = 'status'; type = 'string'; required = $true }
     )
+    'validation.v2'       = @(
+        @{ name = 'status'; type = 'string'; required = $true }
+    )
     'permissionFix.v1'    = @(
         @{ name = 'status'; type = 'string'; required = $false }
     )
@@ -96,6 +99,27 @@ function Get-ChaosOperationResultSchema {
         throw "Unknown operation result schema '$Schema'. Known: $(($ChaosOperationResultSchemas.Keys | Sort-Object) -join ', ')"
     }
     return $ChaosOperationResultSchemas[$Schema]
+}
+
+function ConvertTo-ChaosOperationResult {
+    param([Parameter(Mandatory)][string]$Schema, [AllowNull()][object]$Result)
+    if ($Schema -ne 'validation.v2') { return $Result }
+    $normalized = [ordered]@{}
+    foreach ($container in @($Result, (Get-ChaosMember -InputObject $Result -Name properties))) {
+        if ($null -eq $container) { continue }
+        $names = if ($container -is [System.Collections.IDictionary]) { @($container.Keys) } else { @($container.PSObject.Properties.Name) }
+        foreach ($name in $names) {
+            if ($name -eq 'properties') { continue }
+            if ($container -is [System.Collections.IDictionary]) { $value = $container[$name] }
+            else { $value = $container.$name }
+            if ($name -eq 'status' -and ($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value))) { continue }
+            $normalized[$name] = $value
+        }
+    }
+    if (-not $normalized.Contains('status')) {
+        throw "ValidationFailed: validation.v2 requires a nonempty string status at status or properties.status. Response: $(ConvertTo-ChaosCanonicalJson -InputObject $Result)"
+    }
+    return [pscustomobject]$normalized
 }
 
 function Test-ChaosOperationResultType {
@@ -325,6 +349,7 @@ function Invoke-ChaosStudyOperation {
     switch ($selected) {
         'local-az' {
             $raw = Invoke-ChaosLocalAzOperation -Kind $Kind -Arguments $Arguments -Body $Body
+            if ($ExpectedSchema -eq 'validation.v2') { $raw = ConvertTo-ChaosOperationResult -Schema $ExpectedSchema -Result $raw }
             $check = Test-ChaosOperationResult -Schema $ExpectedSchema -Result $raw
             if (-not $check.ok) {
                 throw "Operation '$Kind' returned a result that does not satisfy schema '$ExpectedSchema': $($check.problems -join '; ')"

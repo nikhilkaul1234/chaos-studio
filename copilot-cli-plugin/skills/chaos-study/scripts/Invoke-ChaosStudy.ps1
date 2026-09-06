@@ -613,10 +613,14 @@ if ($AcceptPartialScenario) { $scopeArgs['AcceptPartialScenario'] = $AcceptParti
 if ($Parameters) { $scopeArgs['Parameters'] = $Parameters }
 
 $studyIdOutput = [System.IO.Path]::GetTempFileName()
+$plannedStudyId = $null
 try {
     $scopeArgs['StudyIdOutputPath'] = $studyIdOutput
     $scopeExit = Invoke-ChaosPhase -Name 'chaos-study-scope' -Script $scopeScript -Arguments $scopeArgs
-    $plannedStudyId = ([string](Get-Content -LiteralPath $studyIdOutput -Raw)).Trim()
+    if ($scopeExit -eq 0) {
+        $idText = Get-Content -LiteralPath $studyIdOutput -Raw
+        if (-not [string]::IsNullOrWhiteSpace($idText)) { $plannedStudyId = $idText.Trim() }
+    }
 } finally {
     Remove-Item -LiteralPath $studyIdOutput -Force
 }

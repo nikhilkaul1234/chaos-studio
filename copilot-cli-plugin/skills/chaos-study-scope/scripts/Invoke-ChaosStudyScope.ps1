@@ -377,8 +377,15 @@ function New-ChaosPreflightConfiguration {
     Add-ChaosPreflightResidueEntry -StudyPath $StudyPath -ConfigurationName $name -Adapter $Adapter `
         -Workspace ([pscustomobject]@{ resourceGroup = $Plan.workspace.resourceGroup; name = $Plan.workspace.name; scenario = $Plan.scenario.name }) | Out-Null
 
-    $validation = Invoke-ChaosStudyOperation -Kind 'config.validate' -Arguments @{ cliArgs = $scoping } `
-        -ExpectedSchema 'validation.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config validate'
+    try {
+        $validation = Invoke-ChaosStudyOperation -Kind 'config.validate' -Arguments @{ cliArgs = $scoping } `
+            -ExpectedSchema 'validation.v2' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config validate'
+    } catch {
+        $validation = [pscustomobject]@{
+            status = 'InvalidResponse'
+            errors = @([pscustomobject]@{ errorCode = 'ValidationFailed'; errorMessage = $_.Exception.Message })
+        }
+    }
 
     $status = Get-ChaosPreflightValidationStatus -Validation $validation
 

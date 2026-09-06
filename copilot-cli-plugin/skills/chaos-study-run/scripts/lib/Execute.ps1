@@ -531,7 +531,7 @@ function Get-ChaosConfigurationValidation {
         -OperationHint 'scenario config validate' | Out-Null
 
     return Invoke-ChaosStudyOperation -Kind 'config.showValidation' -Arguments @{ cliArgs = $cliArgs } `
-        -ExpectedSchema 'any.v1' -Adapter $resolvedAdapter -StudyPath $StudyPath `
+        -ExpectedSchema 'validation.v2' -Adapter $resolvedAdapter -StudyPath $StudyPath `
         -OperationHint 'scenario config show-validation'
 }
 

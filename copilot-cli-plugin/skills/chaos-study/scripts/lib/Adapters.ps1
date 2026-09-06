@@ -502,6 +502,7 @@ function Resolve-ChaosPendingOperation {
     }
 
     $payload = if ($resultFile.PSObject.Properties.Name -contains 'result') { $resultFile.result } else { $null }
+    if ($ExpectedSchema -eq 'validation.v2') { $payload = ConvertTo-ChaosOperationResult -Schema $ExpectedSchema -Result $payload }
     $check = Test-ChaosOperationResult -Schema $ExpectedSchema -Result $payload
     if (-not $check.ok) {
         throw "Operation result for '$operationId' does not satisfy schema '$ExpectedSchema': $($check.problems -join '; ')"
