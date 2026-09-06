@@ -98,32 +98,6 @@ function Get-ChaosSignalValue {
     return $map[$Name]
 }
 
-function Test-ChaosPredicate {
-    <#
-    .SYNOPSIS
-        Evaluate a steady-state predicate against a measurement.
-
-    .OUTPUTS
-        $true held, $false breached, $null not measurable.
-    #>
-    param(
-        [Parameter(Mandatory)][object]$Predicate,
-        [AllowNull()][object]$Value
-    )
-    if ($null -eq $Value) { return $null }
-    $threshold = [double]$Predicate.threshold
-    $actual = [double]$Value
-    switch ([string]$Predicate.comparison) {
-        '>=' { return $actual -ge $threshold }
-        '>'  { return $actual -gt $threshold }
-        '<=' { return $actual -le $threshold }
-        '<'  { return $actual -lt $threshold }
-        '==' { return $actual -eq $threshold }
-        '!=' { return $actual -ne $threshold }
-        default { return $null }
-    }
-}
-
 function Get-ChaosImpactDelta {
     <#
     .SYNOPSIS

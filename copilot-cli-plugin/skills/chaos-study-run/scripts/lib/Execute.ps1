@@ -1789,7 +1789,14 @@ function Wait-ChaosScenarioRunWindow {
     $terminal = $false
     $abort = $null
     $abortChecks = @()
-    $windowStart = $InjectionStartedAt
+    $lookbackSeconds = $null
+    if ($OnAbortCheck) {
+        $lookbackSeconds = ($Plan.safety.abortConditions | Where-Object { $_.kind -eq 'missing-signal' } |
+            ForEach-Object { [int]$_.intervalSeconds * [int]$_.unavailableIntervals } | Measure-Object -Maximum).Maximum
+        if ($null -eq $lookbackSeconds -or $lookbackSeconds -le 0) {
+            throw 'Live abort polling requires a positive frozen missing-signal window.'
+        }
+    }
 
     while ([datetime]::UtcNow -lt $deadline) {
         $last = Get-ChaosStudyScenarioRun -Plan $Plan -RunId $RunId -Adapter $Adapter -StudyPath $StudyPath
@@ -1798,12 +1805,13 @@ function Wait-ChaosScenarioRunWindow {
         if (Test-ChaosScenarioRunTerminal -Status $status) { $terminal = $true; break }
 
         $checkedAt = ConvertFrom-ChaosUtcIso -Text (Get-ChaosUtcNow)
-        if ($OnAbortCheck -and $checkedAt -gt $windowStart) {
-            $window = New-ChaosWindow -Name abort-check -Start $windowStart -End $checkedAt
+        if ($OnAbortCheck) {
+            # Poll cadence is not metric resolution. Query the frozen trailing
+            # telemetry window so minute buckets and ingestion lag are included.
+            $window = New-ChaosWindow -Name abort-check -Start $checkedAt.AddSeconds(-$lookbackSeconds) -End $checkedAt
             $check = & $OnAbortCheck $window
             if ($null -eq $check) { throw 'Live abort evaluation returned no result; injection cannot continue unmonitored.' }
             $abortChecks += $check
-            $windowStart = $checkedAt
             if ($check.triggered) {
                 $abort = $check.trigger
                 break

@@ -195,14 +195,10 @@ function Get-ChaosMetricSignal {
         foreach ($metric in @($response.body.value | Where-Object { $null -ne $_ })) {
             foreach ($timeseries in @($metric.timeseries | Where-Object { $null -ne $_ })) {
                 foreach ($point in @($timeseries.data | Where-Object { $null -ne $_ })) {
-                    $value = $null
-                    foreach ($candidate in @('average', 'total', 'maximum', 'minimum', 'count')) {
-                        if ($point.PSObject.Properties.Name -contains $candidate -and $null -ne $point.$candidate) {
-                            $value = $point.$candidate
-                            break
-                        }
+                    $aggregation = $Spec.aggregation.ToLowerInvariant()
+                    if ($point.PSObject.Properties.Name -contains $aggregation -and $null -ne $point.$aggregation) {
+                        $series += [ordered]@{ timestamp = $point.timeStamp; value = $point.$aggregation }
                     }
-                    $series += [ordered]@{ timestamp = $point.timeStamp; value = $value }
                 }
             }
         }
@@ -398,11 +394,26 @@ function Invoke-ChaosAbortEvaluation {
                 foreach ($source in $condition.sources) {
                     $id = (ConvertFrom-ChaosSignalSourceSpec -Spec $source).id
                     $signal = @($Signals | Where-Object { $null -ne $_ -and $_.source -eq $id } | Select-Object -First 1)
-                    $measured = $signal.Count -gt 0 -and $null -ne $signal[0].values -and @($signal[0].values).Count -gt 0
-                    if ($measured) { $State.lastSeen[$id] = $observedAt }
+                    $measured = $signal.Count -gt 0 -and
+                        @((Get-ChaosSignalValueMap -Signal $signal[0]).Values | Where-Object { $null -ne $_ }).Count -gt 0
+                    if ($measured) {
+                        # A trailing query repeats older buckets. Do not turn their
+                        # retrieval time into a fresh observation of the signal.
+                        $timestamps = @(foreach ($point in @($signal[0].values)) {
+                            $hasTimestamp = if ($point -is [System.Collections.IDictionary]) {
+                                $point.Contains('timestamp') -and $point.Contains('value')
+                            } else {
+                                $null -ne $point -and $point.PSObject.Properties.Name -contains 'timestamp' -and $point.PSObject.Properties.Name -contains 'value'
+                            }
+                            if ($hasTimestamp -and $null -ne $point.value -and $point.timestamp) {
+                                ConvertFrom-ChaosUtcIso -Text ([string]$point.timestamp)
+                            }
+                        })
+                        $State.lastSeen[$id] = if ($timestamps.Count -gt 0) { $timestamps | Sort-Object -Descending | Select-Object -First 1 } else { $observedAt }
+                    }
                     $lastSeen = if ($State.lastSeen.ContainsKey($id)) { [datetime]$State.lastSeen[$id] } else { $InjectionStartedAt }
                     $missingSeconds = ($observedAt - $lastSeen).TotalSeconds
-                    $tripped = -not $measured -and $missingSeconds -ge $threshold
+                    $tripped = $missingSeconds -ge $threshold
                     $evaluations += [pscustomobject]@{
                         conditionId = $condition.id; kind = 'missing-signal'; source = $id
                         status = if ($tripped) { 'triggered' } elseif ($measured) { 'clear' } else { 'pending' }

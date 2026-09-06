@@ -374,6 +374,8 @@ function New-ChaosPreflightConfiguration {
 
     $created = Invoke-ChaosStudyOperation -Kind 'config.create' -Arguments @{ cliArgs = $scoping } -Body $body `
         -ExpectedSchema 'configuration.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config create'
+    Add-ChaosPreflightResidueEntry -StudyPath $StudyPath -ConfigurationName $name -Adapter $Adapter `
+        -Workspace ([pscustomobject]@{ resourceGroup = $Plan.workspace.resourceGroup; name = $Plan.workspace.name; scenario = $Plan.scenario.name }) | Out-Null
 
     $validation = Invoke-ChaosStudyOperation -Kind 'config.validate' -Arguments @{ cliArgs = $scoping } `
         -ExpectedSchema 'validation.v1' -Adapter $Adapter -StudyPath $StudyPath -OperationHint 'preflight config validate'
@@ -392,7 +394,13 @@ function New-ChaosPreflightConfiguration {
             -OperationHint 'preflight fix-permissions --what-if'
     }
     if ($status -ne 'Succeeded' -and -not (Test-ChaosValidationRepairable -Validation $validation)) {
-        Save-ChaosStudyArtifact -StudyPath $StudyPath -RelativePath 'evidence/preflight/validation.json' -Content $validation | Out-Null
+        try {
+            Save-ChaosStudyArtifact -StudyPath $StudyPath -RelativePath 'evidence/preflight/validation.json' -Content $validation | Out-Null
+        } finally {
+            Invoke-ChaosResidueRemoval -StudyPath $StudyPath -Kind preflightConfiguration -Id $name -Removal {
+                Remove-ChaosStudyConfiguration -Plan $Plan -ConfigurationName $name -Adapter $Adapter -StudyPath $StudyPath
+            } | Out-Null
+        }
         Assert-ChaosConfigurationValidated -Validation $validation -ConfigurationName $name | Out-Null
     }
 
@@ -757,7 +765,7 @@ if (-not $SkipDiscovery) {
     # sorted selectors of skipped legs - not the platform's free-text reasons,
     # so equality means "the same legs execute". The run recomputes this identical
     # projection (Get-ChaosRunEffectivePlanHash) to prove equality rather than trust.
-    # Computed before the residue entry so the ledger records the real hash, not null.
+    # Enrich the already-recorded residue with the validated effective-plan hash.
     $effectivePlanProjection = [ordered]@{
         total      = $effectiveLegs.total
         executable = $effectiveLegs.executable

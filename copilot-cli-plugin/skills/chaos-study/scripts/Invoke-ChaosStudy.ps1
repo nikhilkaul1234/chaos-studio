@@ -20,6 +20,8 @@
         passes -DryRun:$false AND types the consent phrase the plan prints.
       * The plan is frozen and hashed before anything is armed. If the plan
         changes between scope and run, the run refuses.
+      * Approval resumes an explicit -StudyId without re-scoping. Even identical
+        new scopes have different creation timestamps and approval previews.
       * Any non-zero exit from a phase stops the chain immediately. A partial
         study is left on disk, correctly stated, for inspection or resumption.
 
@@ -49,9 +51,11 @@
     Executes nothing.
 
 .EXAMPLE
-    ./Invoke-ChaosStudy.ps1 ... -DryRun:$false -Consent '<phrase the dry run prints>'
+    ./Invoke-ChaosStudy.ps1 -StudyId '<id the dry run prints>' `
+        -DryRun:$false -Consent '<phrase from that preview>'
 
-    Runs the study for real, then reports and seals it.
+    Runs that frozen study, then reports and seals it. Reuse -StudyRoot if the
+    study was planned in a non-default store.
 
 .EXAMPLE
     ./Invoke-ChaosStudy.ps1 -ListActions -SubscriptionId $sub -ResourceGroup rg-prod `
@@ -61,10 +65,13 @@
     read live from the service. This suite ships no action catalogue.
 #>
 
-[CmdletBinding(DefaultParameterSetName = 'Study')]
+[CmdletBinding(DefaultParameterSetName = 'Resume')]
 param(
     [Parameter(ParameterSetName = 'ListActions', Mandatory)][switch]$ListActions,
     [Parameter(ParameterSetName = 'ListScenarios', Mandatory)][switch]$ListScenarios,
+    [Parameter(ParameterSetName = 'Resume', Mandatory)]
+    [Parameter(ParameterSetName = 'Study')]
+    [Parameter(ParameterSetName = 'Brief')][string]$StudyId,
 
     [Parameter(ParameterSetName = 'ListActions', Mandatory)]
     [Parameter(ParameterSetName = 'ListScenarios', Mandatory)]
@@ -121,6 +128,7 @@ param(
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][hashtable]$Parameters,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$Hypothesis,
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$SignalSource = @(),
 
     # Falsifiability inputs (Req B). Readiness blocks without them, so the front
@@ -144,14 +152,20 @@ param(
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$ExcludeResource = @(),
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string[]]$ExcludeType = @(),
 
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$StudyRoot,
     [Parameter(ParameterSetName = 'ListActions')]
     [Parameter(ParameterSetName = 'ListScenarios')]
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateSet('local-az', 'external')][string]$Adapter,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$AcceptPartialScenario,
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][bool]$DryRun = $true,
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$Consent,
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$ApprovePermissions,
+    [Parameter(ParameterSetName = 'Resume')]
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][switch]$KeepConfiguration,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][switch]$SkipDiscovery,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][switch]$PlanOnly
@@ -307,6 +321,16 @@ if ($PSCmdlet.ParameterSetName -in @('ListActions', 'ListScenarios')) {
     exit $code
 }
 
+$resumeExisting = $PSBoundParameters.ContainsKey('StudyId') -or $PSBoundParameters.ContainsKey('Consent') -or
+    $PSBoundParameters.ContainsKey('ApprovePermissions') -or -not $DryRun
+if ($resumeExisting -and ([string]::IsNullOrWhiteSpace($StudyId) -or $StudyId -in @('latest', 'previous') -or $PlanOnly)) {
+    Write-ChaosStudyFailure -Title 'An exact study id is required to resume' `
+        -Message 'Approval cannot re-scope a study: scoping creates a different plan and preview. Supply the explicit -StudyId from the reviewed preview, without -PlanOnly.' `
+        -Remediation "chaos-study -StudyId '<reviewed study id>' -DryRun:`$false -Consent '<phrase from that preview>'"
+    exit (Get-ChaosStudyExitCode -Name 'ConsentDeclined')
+}
+
+if (-not $resumeExisting) {
 # ---------------------------------------------------------------------------
 # Phase 0 - the design gate
 #
@@ -665,6 +689,7 @@ Review the plan, then run it when you are ready:
 "@
     exit 0
 }
+}
 
 # ---------------------------------------------------------------------------
 # Phase 2 - run
@@ -696,7 +721,7 @@ The run printed the exact approval phrase and wrote the preview to the study
 directory. Approving role assignments widens access beyond this study, so read
 the preview before you approve it, then resume:
 
-  chaos-study ... -DryRun:`$false -Consent '<phrase>' -ApprovePermissions '<phrase the run printed>'
+  chaos-study -StudyId $studyId -DryRun:`$false -Consent '<phrase>' -ApprovePermissions '<phrase the run printed>'
 "@
     exit $runExit
 }
@@ -715,7 +740,7 @@ evidence to interpret and no report to write.
 
 When the preview matches your intent, arm it:
 
-  chaos-study ... -DryRun:`$false -Consent '<phrase from the preview>'
+  chaos-study -StudyId $studyId -DryRun:`$false -Consent '<phrase from the preview>'
 "@
     exit 0
 }
