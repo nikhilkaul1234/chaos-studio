@@ -1064,7 +1064,7 @@ $summary = @(
 Write-ChaosStudyCard -Title 'Study planned - nothing has been injected' -Body $summary
 if (-not $SkipDiscovery) {
     Write-ChaosStudyCard -Title 'Frozen blast radius and RBAC preview - human approval required' `
-        -Body "An agent must not self-confirm. Review this exact preview before supplying either approval phrase.`n$(Format-ChaosTelemetryLag -Plan $persistedPlan)" `
+        -Body "An agent must not self-confirm. Review this exact preview before supplying either approval phrase.`n$(Format-ChaosDeclaredZoneClaim -Plan $persistedPlan)`n$(Format-ChaosTelemetryLag -Plan $persistedPlan)" `
         -JsonPreview ($approvalPreview | ConvertTo-Json -Depth 32)
 }
 

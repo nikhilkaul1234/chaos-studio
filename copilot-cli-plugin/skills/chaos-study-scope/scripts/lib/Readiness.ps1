@@ -794,6 +794,13 @@ function Get-ChaosDeclaredZoneClaim {
     return [pscustomobject]@{ hasClaim = ($sources.Count -gt 0); zones = @($declared); source = $sources -join ', ' }
 }
 
+function Format-ChaosDeclaredZoneClaim {
+    param([Parameter(Mandatory)][object]$Plan)
+    $claim = Get-ChaosDeclaredZoneClaim -Plan $Plan
+    $text = if ($claim.hasClaim) { ConvertTo-Json -InputObject @($claim.zones) -Compress } else { 'none - no zone claim' }
+    return "Declared zone filter: $text"
+}
+
 function Assert-ChaosScenarioNameHonest {
     <#
     .SYNOPSIS

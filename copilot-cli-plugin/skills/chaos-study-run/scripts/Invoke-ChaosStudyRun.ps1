@@ -110,6 +110,8 @@ $projectedText = if ($null -eq $projectedCount) { '(not resolved)' } else { "$pr
 # -- Dry run ---------------------------------------------------------------
 
 if ($DryRun) {
+    . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-scope' 'scripts' 'lib' 'Readiness.ps1')
+    Write-ChaosStudyCard -Title 'Declared zone boundary' -Body (Format-ChaosDeclaredZoneClaim -Plan $plan)
     $phrase = if ($approvalReady) { Get-ChaosConsentPhrase -Plan $plan -Preview $approvalPreview } else { '(unavailable: re-scope with fresh live discovery and an authoritative RBAC preview)' }
     $previewWindow = New-ChaosWindow -Name 'preview' -Start (ConvertTo-ChaosUtcIso -Instant (Get-Date).ToUniversalTime().AddMinutes(-1)) -End (Get-ChaosUtcNow)
     $preview = Invoke-ChaosSignalCollection -Plan $plan -Window $previewWindow -Sources $sources -DryRun

@@ -93,6 +93,27 @@ Describe 'G2b authoritative zone declarations' {
 }
 
 Describe 'G2b exact captured scenario scope' {
+    It 'prints <Label> before approval in both scope and dry-run' -ForEach @(
+        @{ Label = 'the declared zone'; Filter = '1'; ExpectedText = 'Declared zone filter: ["1"]' }
+        @{ Label = 'no zone claim'; Filter = $null; ExpectedText = 'Declared zone filter: none - no zone claim' }
+    ) {
+        $root = "$TestDrive/display-$Filter"
+        $effective = Resolve-ChaosEffectiveLegs ([IO.File]::ReadAllText($script:Fixture))
+        $scopeHash = Get-ChaosScopeHash -SubscriptionId sub -ResourceGroup rg -WorkspaceName ws -Scope @('/subscriptions/sub/resourceGroups/rg') -Region westus2
+        $binding = Get-ChaosEffectiveLegsBindingHash -ScopeHash $scopeHash -ScenarioName 'ZoneDown-1.0' -EffectiveLegs $effective
+        $args = @{
+            Skills = $script:Skills; StudyRoot = $root; ExecutionPlanPath = $script:Fixture; UseLiveZoneDefinitions = $true
+            AcceptPartialScenario = Get-ChaosPartialScenarioPhrase -EffectiveLegs $effective -BindingHash $binding
+        }
+        if ($Filter) { $args.FilterZone = $Filter }
+        $output = & pwsh -NoProfile -NonInteractive -File "$PSScriptRoot/fixtures/Invoke-TelemetryScopeFixture.ps1" @args 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($output | Out-String)
+        ($output | Out-String) | Should -Match ([regex]::Escape($ExpectedText))
+        $preview = & pwsh -NoProfile -NonInteractive -File "$script:Skills/chaos-study-run/scripts/Invoke-ChaosStudyRun.ps1" -StudyRoot $root 2>&1
+        $LASTEXITCODE | Should -Be 0 -Because ($preview | Out-String)
+        ($preview | Out-String) | Should -Match ([regex]::Escape($ExpectedText))
+    }
+
     It 'uses declared FilterZone 1 for ZoneDown-1.0 with target zone <TargetZone>' -ForEach @(
         @{ TargetZone = '1'; Expected = 0 }, @{ TargetZone = '2'; Expected = 14 }
     ) {
