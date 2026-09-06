@@ -542,6 +542,7 @@ function Resolve-ChaosEffectiveLegs {
     $legs = @(Get-ChaosExecutionPlanLegs -ExecutionPlan $ExecutionPlan)
     $skipped = @()
     $executableSelectors = @()
+    $executableZones = $null
 
     foreach ($leg in $legs) {
         $selector = Get-ChaosLegSelectorText -Leg $leg
@@ -556,6 +557,13 @@ function Resolve-ChaosEffectiveLegs {
             }
         } else {
             $executableSelectors += $selector
+            if (($leg -is [System.Collections.IDictionary] -and $leg.Contains('targets')) -or $leg.PSObject.Properties.Name -contains 'targets') {
+                if ($null -eq $executableZones) { $executableZones = @() }
+                foreach ($target in @($leg.targets)) {
+                    $metadata = Get-ChaosLegField -Leg $target -Names @('metadata')
+                    $executableZones += @(Get-ChaosLegField -Leg $metadata -Names @('zones') | Where-Object { $_ })
+                }
+            }
         }
     }
 
@@ -567,6 +575,7 @@ function Resolve-ChaosEffectiveLegs {
         executable          = $executableCount
         skipped             = @($skipped)
         executableSelectors = @($executableSelectors)
+        executableZones     = $executableZones
     }
 }
 
@@ -704,6 +713,7 @@ pass this phrase exactly:
 
   $($decision.expectedPhrase)
 "@ -Remediation "-AcceptPartialScenario '$($decision.expectedPhrase)'"
+        if ($OnScopeUnverified) { & $OnScopeUnverified | Out-Null }
         exit (Get-ChaosStudyExitCode -Name 'PartialScenarioUnaccepted')
     }
 
@@ -753,9 +763,14 @@ function Assert-ChaosScenarioNameHonest {
     $claimedZones = @($claimedZones | Where-Object { $_ } | Select-Object -Unique)
     if ($claimedZones.Count -eq 0) { return $true }
 
-    $executableText = (@($EffectiveLegs.executableSelectors) -join ' ')
-    $runnableZones = @([regex]::Matches($executableText, '(?i)zone[\s_-]?([0-9]+)') | ForEach-Object { $_.Groups[1].Value })
-    $runnableZones += @([regex]::Matches($executableText, '(?i)\baz([0-9]+)\b') | ForEach-Object { $_.Groups[1].Value })
+    if ($EffectiveLegs.PSObject.Properties.Name -contains 'executableZones' -and $null -ne $EffectiveLegs.executableZones) {
+        $runnableZones = @($EffectiveLegs.executableZones)
+    } else {
+        # Legacy legs have no target set; retain their selector-based contract.
+        $executableText = (@($EffectiveLegs.executableSelectors) -join ' ')
+        $runnableZones = @([regex]::Matches($executableText, '(?i)zone[\s_-]?([0-9]+)') | ForEach-Object { $_.Groups[1].Value })
+        $runnableZones += @([regex]::Matches($executableText, '(?i)\baz([0-9]+)\b') | ForEach-Object { $_.Groups[1].Value })
+    }
     $runnableZones = @($runnableZones | Where-Object { $_ } | Select-Object -Unique)
 
     $missing = @($claimedZones | Where-Object { $runnableZones -notcontains $_ })

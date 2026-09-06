@@ -7,13 +7,18 @@ param(
     [string]$ExecutionPlanPath,
     [ValidateSet('success', 'absent', 'present')][string]$DeleteResult = 'success',
     [string]$ScenarioName = 'fixture',
-    [string]$AcceptPartialScenario
+    [string]$AcceptPartialScenario,
+    [string]$ConfigurationInventoryPath
 )
 $ErrorActionPreference = 'Stop'
 if (Get-Command az -CommandType Application -ErrorAction SilentlyContinue) { throw 'Real Azure CLI must not be reachable in this fixture.' }
 $global:FixtureTarget = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm'
 $global:FixtureWorkspace = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
 $global:MetricQueries = 0
+$global:FixtureConfigurations = @()
+if ($ConfigurationInventoryPath -and (Test-Path -LiteralPath $ConfigurationInventoryPath)) {
+    $global:FixtureConfigurations = @(Get-Content -LiteralPath $ConfigurationInventoryPath -Raw | ConvertFrom-Json)
+}
 New-Item -ItemType Directory $StudyRoot -Force | Out-Null
 function global:Start-Sleep {
     param([double]$Seconds)
@@ -59,6 +64,10 @@ function global:az {
     if ($command -like 'chaos scenario config create *') {
         $i = [array]::IndexOf($args, '-n')
         $global:FixtureConfigurationName = $args[$i + 1]
+        if ($ConfigurationInventoryPath) {
+            $global:FixtureConfigurations = @($global:FixtureConfigurations | Where-Object { $_ -ne $global:FixtureConfigurationName }) + $global:FixtureConfigurationName
+            ConvertTo-Json -InputObject @($global:FixtureConfigurations) | Set-Content -LiteralPath $ConfigurationInventoryPath
+        }
         return (@{ name = $args[$i + 1] } | ConvertTo-Json)
     }
     if ($command -like 'chaos scenario config validate *') {
@@ -68,10 +77,17 @@ function global:az {
         return '{"status":"Succeeded","legs":[{"legSelector":"vm","action":"fixture-action","executable":true}]}'
     }
     if ($command -like 'chaos scenario config delete *') {
+        if ($ConfigurationInventoryPath -and $DeleteResult -ne 'present') {
+            $global:FixtureConfigurations = @($global:FixtureConfigurations | Where-Object { $_ -ne $global:FixtureConfigurationName })
+            ConvertTo-Json -InputObject @($global:FixtureConfigurations) | Set-Content -LiteralPath $ConfigurationInventoryPath
+        }
         if ($DeleteResult -ne 'success') { $global:LASTEXITCODE = 1; return 'BadRequest: Nullable object must have a value.' }
         return
     }
     if ($command -like 'chaos scenario config list *') {
+        if ($ConfigurationInventoryPath) {
+            return (@{ value = @($global:FixtureConfigurations | ForEach-Object { @{ name = $_ } }) } | ConvertTo-Json -Depth 10)
+        }
         if ($DeleteResult -eq 'absent') { return '[]' }
         return (@{ value = @(@{ name = $global:FixtureConfigurationName }) } | ConvertTo-Json -Depth 10)
     }
