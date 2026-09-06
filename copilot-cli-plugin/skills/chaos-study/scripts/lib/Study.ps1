@@ -18,7 +18,7 @@
 
         <scopeHash>/<studyId>/
             manifest.json          identity, pins, hashes  (written at seal)
-            study-plan.v3.json     what we intended to test
+            study-plan.v4.json     what we intended to test
             run-record.v3.json     what actually happened
             findings.v2.json       what it means
             report.html            the artifact a human reads

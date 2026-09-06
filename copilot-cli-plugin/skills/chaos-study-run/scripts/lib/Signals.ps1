@@ -140,6 +140,10 @@ function Get-ChaosWindowTimespan {
     return "$start/$end"
 }
 
+function Get-ChaosMetricGrain {
+    return 'PT1M'
+}
+
 function Get-ChaosMetricSignal {
     <#
     .SYNOPSIS
@@ -169,7 +173,7 @@ function Get-ChaosMetricSignal {
         metric      = $Spec.metricName
         aggregation = $Spec.aggregation
         timespan    = $timespan
-        interval    = 'PT1M'
+        interval    = Get-ChaosMetricGrain
     }
 
     if (-not (Get-Command Invoke-ChaosStudyOperation -ErrorAction SilentlyContinue)) {
@@ -180,7 +184,7 @@ function Get-ChaosMetricSignal {
     # Probe-signal collection is routed through the operation seam - never a
     # direct Invoke-ChaosStudyAzRest - so the mechanism probe reaches Azure the same way
     # every other operation does and can be brokered or stubbed as one.
-    $uri = "$metricTarget/providers/Microsoft.Insights/metrics?timespan=$timespan&interval=PT1M&metricnames=$($Spec.metricName)&aggregation=$($Spec.aggregation)"
+    $uri = "$metricTarget/providers/Microsoft.Insights/metrics?timespan=$timespan&interval=$($query.interval)&metricnames=$($Spec.metricName)&aggregation=$($Spec.aggregation)"
     try {
         $response = Invoke-ChaosStudyOperation -Kind 'metrics.query' -Arguments @{ uri = $uri } `
             -ExpectedSchema 'any.v1' -Adapter $Adapter -StudyPath $StudyPath
@@ -345,6 +349,90 @@ function Invoke-ChaosSignalCollection {
     }
 
     return ,@($results)
+}
+
+function New-ChaosTelemetryLag {
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Queries,
+        [Parameter(Mandatory)][int]$BaselineMinutes,
+        [Parameter(Mandatory)][int]$GrainSeconds,
+        [Nullable[int]]$UnavailableIntervals
+    )
+    if ($GrainSeconds -le 0 -or $BaselineMinutes * 60 -lt 2 * $GrainSeconds) {
+        throw 'ReadinessFailed: the baseline must cover at least two grains to distinguish a moving metric bucket from a stuck one.'
+    }
+    if ($Queries.Count -eq 0) { throw 'ReadinessFailed: no non-null metric buckets were observed; missing-signal tolerance cannot be derived.' }
+    foreach ($query in $Queries) {
+        if ($null -eq $query.ageSeconds -or -not [double]::IsFinite([double]$query.ageSeconds) -or $query.ageSeconds -lt 0) {
+            throw 'ReadinessFailed: metric bucket age is missing, invalid or in the future.'
+        }
+    }
+    $maximum = ($Queries | Measure-Object -Property ageSeconds -Maximum).Maximum
+    $minimum = [int][math]::Ceiling(($maximum + $GrainSeconds) / $GrainSeconds)
+    if ($null -ne $UnavailableIntervals -and $UnavailableIntervals -lt $minimum) {
+        throw "ReadinessFailed: -UnavailableIntervals $UnavailableIntervals is below the measured minimum $minimum. Samples: $(ConvertTo-ChaosCanonicalJson -InputObject $Queries)"
+    }
+    return [pscustomobject]@{
+        grainSeconds = $GrainSeconds
+        baselineMinutes = $BaselineMinutes
+        bucketBudget = [int][math]::Ceiling($BaselineMinutes * 60 / $GrainSeconds)
+        samplingReason = 'Two readiness queries one grain apart are the minimum that distinguishes a stuck bucket from a moving one.'
+        queries = @($Queries)
+        derivedUnavailableIntervals = $minimum
+        unavailableIntervals = if ($null -eq $UnavailableIntervals) { $minimum } else { $UnavailableIntervals }
+    }
+}
+
+function Measure-ChaosTelemetryLag {
+    param(
+        [Parameter(Mandatory)][object]$Plan,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Sources,
+        [Parameter(Mandatory)][int]$BaselineMinutes,
+        [Nullable[int]]$UnavailableIntervals,
+        [string]$Adapter,
+        [string]$StudyPath
+    )
+    $grainSeconds = [int][Xml.XmlConvert]::ToTimeSpan((Get-ChaosMetricGrain)).TotalSeconds
+    if ($BaselineMinutes * 60 -lt 2 * $grainSeconds) {
+        throw 'ReadinessFailed: the baseline must cover at least two grains before an abort contract can be frozen.'
+    }
+    $metrics = @($Sources | Where-Object { $_ -like 'metrics:*' })
+    if ($metrics.Count -eq 0) { throw 'ReadinessFailed: a metric source with non-null timestamped buckets is required to derive missing-signal tolerance.' }
+    $bucketBudget = [int][math]::Ceiling($BaselineMinutes * 60 / $grainSeconds)
+    $queries = @()
+    # Two points, one grain apart, distinguish a moving bucket from a stuck one.
+    foreach ($observation in 1..2) {
+        if ($observation -gt 1) { Start-Sleep -Seconds $grainSeconds }
+        $atUtc = Get-ChaosUtcNow
+        $at = ConvertFrom-ChaosUtcIso -Text $atUtc
+        $window = New-ChaosWindow -Name telemetry-readiness -Start $at.AddMinutes(-$BaselineMinutes) -End $at
+        $signals = ConvertTo-ChaosList (Invoke-ChaosSignalCollection -Plan $Plan -Window $window -Sources $metrics -Adapter $Adapter -StudyPath $StudyPath)
+        if ($signals.Count -ne $metrics.Count) { throw 'ReadinessFailed: not every metric source returned a readiness result.' }
+        foreach ($signal in $signals) {
+            $points = @(foreach ($point in @($signal.values)) {
+                if ($null -eq $point) { continue }
+                $timestamp = Get-ChaosMember -InputObject $point -Name timestamp
+                $value = Get-ChaosMember -InputObject $point -Name value
+                if ($null -eq $value -or -not $timestamp) { continue }
+                $instant = ConvertFrom-ChaosUtcIso -Text ([string]$timestamp)
+                if ($instant -ge $at.AddMinutes(-$BaselineMinutes) -and $instant -le $at) {
+                    [pscustomobject]@{ instant = $instant; value = $value }
+                }
+            })
+            $points = @($points | Sort-Object instant -Descending | Select-Object -First $bucketBudget)
+            if ($points.Count -eq 0) {
+                throw "ReadinessFailed: no non-null metric bucket for '$($signal.source)' in the baseline window. $($signal.caveat)"
+            }
+            $queries += [pscustomobject]@{
+                source = $signal.source
+                atUtc = $atUtc
+                newestNonNullBucketUtc = ConvertTo-ChaosUtcIso -Instant $points[0].instant
+                ageSeconds = ($at - $points[0].instant).TotalSeconds
+                value = $points[0].value
+            }
+        }
+    }
+    return New-ChaosTelemetryLag -Queries $queries -BaselineMinutes $BaselineMinutes -GrainSeconds $grainSeconds -UnavailableIntervals $UnavailableIntervals
 }
 
 function Get-ChaosPredicateSignalValue {

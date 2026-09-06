@@ -9,7 +9,7 @@
     The contract revision grows the plan, run-record, findings and manifest
     schemas. Growing a schema in place would silently reinterpret every study
     written under the old shape, so each artifact is versioned by filename
-    (study-plan.v3.json, run-record.v3.json, findings.v2.json) and, for the
+    (study-plan.v4.json, run-record.v3.json, findings.v2.json) and, for the
     manifest, by an in-content manifestVersion field.
 
     This file owns two things and nothing else:
@@ -36,7 +36,7 @@ if (-not (Get-Command Get-ChaosStudyExitCode -ErrorAction SilentlyContinue)) {
 # reading. Order in the legacy list is newest-first so the reader prefers the
 # newest shape actually present on disk.
 $ChaosArtifactVersions = [ordered]@{
-    plan      = [ordered]@{ current = 'study-plan.v3.json'; legacy = @('study-plan.v2.json', 'study-plan.v1.json') }
+    plan      = [ordered]@{ current = 'study-plan.v4.json'; legacy = @('study-plan.v3.json', 'study-plan.v2.json', 'study-plan.v1.json') }
     runRecord = [ordered]@{ current = 'run-record.v3.json'; legacy = @('run-record.v2.json', 'run-record.v1.json') }
     findings  = [ordered]@{ current = 'findings.v2.json'; legacy = @('findings.v1.json') }
 }

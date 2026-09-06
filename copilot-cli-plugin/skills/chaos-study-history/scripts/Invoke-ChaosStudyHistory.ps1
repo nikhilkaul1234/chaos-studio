@@ -435,6 +435,10 @@ $($baseline.studyId): predicate $($comparison.baseline.predicateVerdict), study 
 
         $adapter = [string](Get-ChaosMember -InputObject $plan -Name 'adapter')
         if (-not [string]::IsNullOrWhiteSpace($adapter)) { $lines += "    -Adapter '$adapter' ``" }
+        $telemetryLag = Get-ChaosMember -InputObject (Get-ChaosMember -InputObject $plan -Name discovery) -Name telemetryLag
+        if ($null -ne $telemetryLag) {
+            $lines += "    -UnavailableIntervals $($telemetryLag.unavailableIntervals) ``"
+        }
 
         $lines += @(
             "    -DurationMinutes $($plan.windows.injectMinutes) ``"

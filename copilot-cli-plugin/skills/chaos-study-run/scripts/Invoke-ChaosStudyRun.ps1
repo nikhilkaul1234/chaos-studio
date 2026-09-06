@@ -176,6 +176,12 @@ exact plan. Type it exactly:
 
 # -- Armed path ------------------------------------------------------------
 
+if ((Test-ChaosStudyGeneration -StudyPath $studyPath) -eq 'legacy') {
+    Write-ChaosStudyFailure -Title 'A current-generation plan is required' -Message 'This older study remains read-only; it cannot acquire a new telemetry or approval contract.' `
+        -Remediation 'Re-scope with live discovery to measure telemetry lag and review a fresh plan.'
+    exit (Get-ChaosStudyExitCode -Name StudyIncompatibleVersion)
+}
+
 if (-not (Test-ChaosPlanLiveDiscovery -Plan $plan)) {
     Write-ChaosStudyFailure -Title 'Fresh discovery is required' `
         -Message 'Offline or unresolved plans cannot authorize injection, including with -Force.' `

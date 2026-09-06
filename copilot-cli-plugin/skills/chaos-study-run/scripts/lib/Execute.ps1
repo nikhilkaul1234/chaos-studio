@@ -260,6 +260,8 @@ This study would run scenario $($Plan.scenario.name) - action $($Plan.action.dis
   reaching    $countText scoped resource(s) after filters and exclusions
 for $($Plan.windows.injectMinutes) minutes.
 
+$(Format-ChaosTelemetryLag -Plan $Plan)
+
 To authorise it, pass this phrase exactly:
 
   $expected
@@ -332,6 +334,13 @@ function Get-ChaosScenarioParameterList {
     return $pairs
 }
 
+function Format-ChaosTelemetryLag {
+    param([Parameter(Mandatory)][object]$Plan)
+    $lag = Get-ChaosMember -InputObject (Get-ChaosMember -InputObject $Plan -Name discovery) -Name telemetryLag
+    if ($null -eq $lag) { return 'Missing-signal tolerance: not derived; fresh live telemetry discovery is required before approval.' }
+    return "Missing-signal tolerance: $($lag.unavailableIntervals) intervals of $($lag.grainSeconds) seconds; measured minimum $($lag.derivedUnavailableIntervals). Samples: $(ConvertTo-ChaosCanonicalJson -InputObject $lag.queries)"
+}
+
 function Write-ChaosStudyDryRunContract {
     param([Parameter(Mandatory)][object]$Plan, [Parameter(Mandatory)][string]$ConfigurationName)
     $effective = [ordered]@{}
@@ -345,6 +354,7 @@ function Write-ChaosStudyDryRunContract {
     }
     @"
 Frozen configuration hash: $($Plan.frozenConfigHash)
+$(Format-ChaosTelemetryLag -Plan $Plan)
 Effective scenario parameters (service defaults merged with frozen overrides): $parameters
 Action type: $actionType
 Restoration: $restoration

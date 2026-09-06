@@ -126,6 +126,7 @@ param(
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$DurationMinutes = 10,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$BaselineMinutes = 5,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
+    [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][ValidateRange(1, [int]::MaxValue)][Nullable[int]]$UnavailableIntervals,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][hashtable]$Parameters,
     [Parameter(ParameterSetName = 'Study')][Parameter(ParameterSetName = 'Brief')][string]$Hypothesis,
     [Parameter(ParameterSetName = 'Resume')]
@@ -611,6 +612,7 @@ if ($SkipDiscovery) { $scopeArgs['SkipDiscovery'] = [switch]::Present }
 if ($Adapter) { $scopeArgs['Adapter'] = $Adapter }
 if ($AcceptPartialScenario) { $scopeArgs['AcceptPartialScenario'] = $AcceptPartialScenario }
 if ($Parameters) { $scopeArgs['Parameters'] = $Parameters }
+if ($null -ne $UnavailableIntervals) { $scopeArgs['UnavailableIntervals'] = $UnavailableIntervals }
 
 $studyIdOutput = [System.IO.Path]::GetTempFileName()
 $plannedStudyId = $null

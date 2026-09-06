@@ -619,9 +619,9 @@ Describe 'Portable front door and artifacts' {
         $source | Should -Not -Match 'Write-Error-Card[^\r\n]*-Body'
     }
     It 'keeps artifact filenames and payload versions coherent' {
-        Get-ChaosArtifactFileName plan | Should -Be 'study-plan.v3.json'
+        Get-ChaosArtifactFileName plan | Should -Be 'study-plan.v4.json'
         Get-ChaosArtifactFileName runRecord | Should -Be 'run-record.v3.json'
-        (Get-Content $script:ScopeEntry -Raw) | Should -Match "study-plan.v3"
+        (Get-Content $script:ScopeEntry -Raw) | Should -Match "study-plan.v4"
         (Get-Content $script:RunEntry -Raw) | Should -Match "run-record.v3"
     }
     It 'renders effective defaults and the full frozen dry-run contract' {

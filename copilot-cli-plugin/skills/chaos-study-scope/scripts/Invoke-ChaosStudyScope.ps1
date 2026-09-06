@@ -102,6 +102,9 @@ param(
     [ValidateRange(1, 240)][int]$DurationMinutes = 10,
     [ValidateRange(1, 240)][int]$BaselineMinutes = 5,
     [ValidateRange(1, 240)][int]$RecoveryMinutes = 10,
+    # Optional owner tolerance; cannot undercut the measured age plus one grain.
+    # Live baseline must cover two grains; scope samples twice, one grain apart.
+    [ValidateRange(1, [int]::MaxValue)][Nullable[int]]$UnavailableIntervals,
 
     # Scenario parameters, keyed by the names in the scenario's live parameter
     # list. Frozen onto the plan as the {key,value} pairs the service takes.
@@ -198,8 +201,9 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib' 'Readiness.ps1')
 . (Join-Path $PSScriptRoot 'lib' 'BriefHandoff.ps1')
 . (Join-Path $PSScriptRoot '..' '..' 'chaos-study-run' 'scripts' 'lib' 'Execute.ps1')
+. (Join-Path $PSScriptRoot '..' '..' 'chaos-study-run' 'scripts' 'lib' 'Signals.ps1')
 
-$ChaosStudyPlanVersion = 'study-plan.v3'
+$ChaosStudyPlanVersion = 'study-plan.v4'
 
 # -- Brief hydration -------------------------------------------------------
 # Runs before anything else so every downstream reference sees final values.
@@ -721,6 +725,24 @@ foreach ($gate in $readiness.gates) {
 
 Assert-ChaosReadiness -Readiness $readiness
 
+$telemetryLag = $null
+$grainSeconds = [int][Xml.XmlConvert]::ToTimeSpan((Get-ChaosMetricGrain)).TotalSeconds
+if (-not $SkipDiscovery) {
+    try {
+        $telemetryPlan = [pscustomobject]@{ scope = [pscustomobject]@{ projectedResources = @($projected) } }
+        $telemetryLag = Measure-ChaosTelemetryLag -Plan $telemetryPlan -Sources $SignalSource -BaselineMinutes $BaselineMinutes `
+            -UnavailableIntervals $UnavailableIntervals -Adapter $Adapter -StudyPath $stagingPath
+    } catch {
+        Write-ChaosStudyFailure -Title 'Telemetry readiness failed' -Message $_.Exception.Message `
+            -Remediation 'Use a baseline of at least two metric grains and a metric source with non-null buckets. An override cannot be lower than the measured minimum.'
+        exit (Get-ChaosStudyExitCode -Name ReadinessFailed)
+    }
+} elseif ($null -ne $UnavailableIntervals) {
+    Write-ChaosStudyFailure -Title 'Live telemetry is required for an override' -Message 'An offline plan cannot establish the minimum unavailable intervals.' `
+        -Remediation 'Re-scope without -SkipDiscovery to measure the telemetry lag.'
+    exit (Get-ChaosStudyExitCode -Name ReadinessFailed)
+}
+
 # -- Freeze the plan -------------------------------------------------------
 #
 # Everything above this line is discovery. Everything below is a commitment.
@@ -926,21 +948,23 @@ $plan = [ordered]@{
         baselineMinutes = $BaselineMinutes
         injectMinutes   = $DurationMinutes
         recoveryMinutes = $RecoveryMinutes
-        interval        = 60
+        interval        = $grainSeconds
     }
 
     safety      = [ordered]@{
         reversible      = ($selectedAction.actionType -and $selectedAction.actionType -ine 'Discrete')
         requiresConsent = $true
         abortConditions = @(
+            if ($null -ne $telemetryLag) {
             [ordered]@{
                 id = 'steady-state-breach'; kind = 'predicate'; predicate = $predicate
                 description = "Cancel immediately if $($predicate.raw) is breached during injection."
             }
             [ordered]@{
                 id = 'signal-unavailable'; kind = 'missing-signal'; sources = @($SignalSource)
-                intervalSeconds = 60; unavailableIntervals = 2
-                description = 'Cancel if a signal source stops reporting for two frozen 60-second intervals.'
+                intervalSeconds = $grainSeconds; unavailableIntervals = $telemetryLag.unavailableIntervals
+                description = "Cancel if a signal source stops reporting for $($telemetryLag.unavailableIntervals) frozen $grainSeconds-second intervals (measured minimum $($telemetryLag.derivedUnavailableIntervals))."
+            }
             }
         )
     }
@@ -963,6 +987,7 @@ $plan = [ordered]@{
         discoveredResourceCount = $(if ($SkipDiscovery) { $null } else { @($scopedResources).Count })
         workspaceEvaluation     = $evaluation
         performedAt             = $discoveryPerformedAt
+        telemetryLag            = $telemetryLag
     }
 }
 
@@ -1017,7 +1042,7 @@ $summary = @(
 Write-ChaosStudyCard -Title 'Study planned - nothing has been injected' -Body $summary
 if (-not $SkipDiscovery) {
     Write-ChaosStudyCard -Title 'Frozen blast radius and RBAC preview - human approval required' `
-        -Body 'An agent must not self-confirm. Review this exact preview before supplying either approval phrase.' `
+        -Body "An agent must not self-confirm. Review this exact preview before supplying either approval phrase.`n$(Format-ChaosTelemetryLag -Plan $persistedPlan)" `
         -JsonPreview ($approvalPreview | ConvertTo-Json -Depth 32)
 }
 
