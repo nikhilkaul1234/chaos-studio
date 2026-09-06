@@ -10,11 +10,14 @@ param(
     [string]$AcceptPartialScenario,
     [string]$ConfigurationInventoryPath,
     [string[]]$FilterZone = @(),
-    [switch]$UseLiveZoneDefinitions
+    [switch]$UseLiveZoneDefinitions,
+    [string]$DiscoveredResourcesPath,
+    [string]$TargetResourceId
 )
 $ErrorActionPreference = 'Stop'
 if (Get-Command az -CommandType Application -ErrorAction SilentlyContinue) { throw 'Real Azure CLI must not be reachable in this fixture.' }
 $global:FixtureTarget = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm'
+if ($TargetResourceId) { $global:FixtureTarget = $TargetResourceId }
 $global:FixtureWorkspace = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
 $global:MetricQueries = 0
 $global:FixtureConfigurations = @()
@@ -45,6 +48,7 @@ function global:az {
             identity = @{ type = 'SystemAssigned'; principalId = 'principal' } } | ConvertTo-Json -Depth 10)
     }
     if ($command -like 'chaos discovered-resource list *') {
+        if ($DiscoveredResourcesPath) { return [IO.File]::ReadAllText($DiscoveredResourcesPath) }
         return (@{ value = @(@{ name = 'vm'; fullyQualifiedIdentifier = $global:FixtureTarget; resourceType = 'microsoft.compute/virtualmachines'; location = 'westus2'; properties = @{ zones = @('1') } }) } | ConvertTo-Json -Depth 10)
     }
     if ($command -like 'chaos workspace show-evaluation *') {
@@ -75,6 +79,14 @@ function global:az {
     if ($command -like 'chaos scenario config create *') {
         $i = [array]::IndexOf($args, '-n')
         $global:FixtureConfigurationName = $args[$i + 1]
+        $body = @{}
+        foreach ($field in @('parameters', 'filters', 'exclusions')) {
+            $fieldIndex = [array]::IndexOf($args, "--$field")
+            if ($fieldIndex -ge 0) {
+                $body[$field] = Get-Content -LiteralPath $args[$fieldIndex + 1].Substring(1) -Raw | ConvertFrom-Json -NoEnumerate
+            }
+        }
+        ConvertTo-Json -InputObject $body -Depth 32 -Compress | Add-Content "$StudyRoot/config-bodies.jsonl"
         if ($ConfigurationInventoryPath) {
             $global:FixtureConfigurations = @($global:FixtureConfigurations | Where-Object { $_ -ne $global:FixtureConfigurationName }) + $global:FixtureConfigurationName
             ConvertTo-Json -InputObject @($global:FixtureConfigurations) | Set-Content -LiteralPath $ConfigurationInventoryPath
@@ -115,5 +127,11 @@ if ($null -ne $UnavailableIntervals) { $scopeArgs.UnavailableIntervals = $Unavai
 if ($AcceptPartialScenario) { $scopeArgs.AcceptPartialScenario = $AcceptPartialScenario }
 if ($FilterZone.Count) { $scopeArgs.FilterZone = $FilterZone }
 if ($null -ne $global:FixtureActionDefinition) { $scopeArgs.Action = $global:FixtureActionDefinition.name }
+if ($DiscoveredResourcesPath -and $TargetResourceId) {
+    $scopeArgs.ExcludeResource = @(
+        Get-Content $DiscoveredResourcesPath -Raw | ConvertFrom-Json |
+            ForEach-Object { $_.properties.fullyQualifiedIdentifier } | Where-Object { $_ -ne $TargetResourceId }
+    )
+}
 & "$Skills/chaos-study-scope/scripts/Invoke-ChaosStudyScope.ps1" @scopeArgs
 exit $LASTEXITCODE

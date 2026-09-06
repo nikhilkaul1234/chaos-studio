@@ -161,7 +161,7 @@ param(
     # Blast radius. These become the scenario configuration's filters and
     # exclusions, which is the only mechanism V2 offers for bounding a run.
     [string[]]$FilterLocation = @(),
-    [ValidateSet('1', '2', '3', 'zone-redundant')][string[]]$FilterZone = @(),
+    [ValidateSet('1', '2', '3')][string[]]$FilterZone = @(),
     [string]$FilterPhysicalZone,
     [string[]]$ExcludeResource = @(),
     [string[]]$ExcludeType = @(),

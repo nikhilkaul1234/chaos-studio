@@ -109,6 +109,12 @@ these samples with the approval preview.
 
 ### Zone declarations
 
+`-FilterZone` accepts `1`, `2`, or `3`; `zone-redundant` is unsupported and is
+rejected at parameter binding rather than assigned guessed service semantics.
+Discovered records with unknown local zones remain candidates with a warning.
+Known nonmatching zones are excluded locally. The service-side filter and
+post-validation target metadata determine whether the study can be approved.
+
 Zone honesty uses effective `Zones` parameters (explicit values override their
 spec defaults) and `filters.zones` before interpreting a scenario name. When
 multiple declarations apply, every executable target must report

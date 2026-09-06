@@ -1,0 +1,282 @@
+[
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/0536ddd3-9663-ab85-40cd-748bdaa5f3e0",
+    "name": "0536ddd3-9663-ab85-40cd-748bdaa5f3e0",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719614+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_3a6899ac/extensions/AzurePolicyforLinux",
+      "namespace": "Arm",
+      "resourceName": "AzurePolicyforLinux",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/1142e0a4-baa3-b64f-81a2-fa12cda5930b",
+    "name": "1142e0a4-baa3-b64f-81a2-fa12cda5930b",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196611+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/networkInterfaces/vnet-westus2-2-nic01-a25c4a41",
+      "namespace": "Arm",
+      "resourceName": "vnet-westus2-2-nic01-a25c4a41",
+      "resourceType": "microsoft.network/networkinterfaces",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/1b9f5c21-7a04-b8a9-57db-a7d2ea94e8df",
+    "name": "1b9f5c21-7a04-b8a9-57db-a7d2ea94e8df",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719564+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test",
+      "namespace": "Arm",
+      "resourceName": "renzo-ws-vmss-test",
+      "resourceType": "microsoft.chaos/workspaces",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/1f1404a2-47a9-9bc6-144d-bc614437c864",
+    "name": "1f1404a2-47a9-9bc6-144d-bc614437c864",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196585+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/networkInterfaces/vnet-westus2-2-nic01-4f5a6b85",
+      "namespace": "Arm",
+      "resourceName": "vnet-westus2-2-nic01-4f5a6b85",
+      "resourceType": "microsoft.network/networkinterfaces",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/3a4b6078-12db-7fc0-c5c2-bd250fbbe539",
+    "name": "3a4b6078-12db-7fc0-c5c2-bd250fbbe539",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196553+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachineScaleSets/renzo-demo-vmss",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo-vmss",
+      "resourceType": "microsoft.compute/virtualmachinescalesets",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/3e98918c-f1bf-9c7a-3279-3356e367a77f",
+    "name": "3e98918c-f1bf-9c7a-3279-3356e367a77f",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719572+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/CHAOS-DEMO-RG/providers/Microsoft.Compute/disks/renzo-demo-vmss_2459858f_OsDisk_1_c9abf8d7913445699949db83ccdf20ef",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo-vmss_2459858f_OsDisk_1_c9abf8d7913445699949db83ccdf20ef",
+      "resourceType": "microsoft.compute/disks",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/472ddc00-5c99-91ef-cd69-6fc636946021",
+    "name": "472ddc00-5c99-91ef-cd69-6fc636946021",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7195969+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_2459858f",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo-vmss_2459858f",
+      "resourceType": "microsoft.compute/virtualmachines",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/4ac57136-ee7a-0722-01f7-b554805801d9",
+    "name": "4ac57136-ee7a-0722-01f7-b554805801d9",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7195782+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/sshPublicKeys/renzo-demo_key",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo_key",
+      "resourceType": "microsoft.compute/sshpublickeys",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/567fb7ce-9c5b-c119-9bf6-c2eca21fa049",
+    "name": "567fb7ce-9c5b-c119-9bf6-c2eca21fa049",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196649+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/networkSecurityGroups/basicNsgvnet-westus2-2-nic01",
+      "namespace": "Arm",
+      "resourceName": "basicNsgvnet-westus2-2-nic01",
+      "resourceType": "microsoft.network/networksecuritygroups",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/5cc956aa-7212-308b-b71e-b3c18920e6cb",
+    "name": "5cc956aa-7212-308b-b71e-b3c18920e6cb",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196692+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/networkSecurityGroups/NRMS-endefk7n6r3ewvnet-westus2-2",
+      "namespace": "Arm",
+      "resourceName": "NRMS-endefk7n6r3ewvnet-westus2-2",
+      "resourceType": "microsoft.network/networksecuritygroups",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/859df771-b055-a42b-d027-6c5f68242c3c",
+    "name": "859df771-b055-a42b-d027-6c5f68242c3c",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196817+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/virtualNetworks/vnet-westus2-2",
+      "namespace": "Arm",
+      "resourceName": "vnet-westus2-2",
+      "resourceType": "microsoft.network/virtualnetworks",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/877160dd-8dfa-60f5-dd6e-a244088ddd64",
+    "name": "877160dd-8dfa-60f5-dd6e-a244088ddd64",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196044+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_2459858f/extensions/Microsoft.Azure.Security.Monitoring.AzureSecurityLinuxAgent",
+      "namespace": "Arm",
+      "resourceName": "Microsoft.Azure.Security.Monitoring.AzureSecurityLinuxAgent",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/8c666407-7dce-5bb8-478b-16c412b61b5c",
+    "name": "8c666407-7dce-5bb8-478b-16c412b61b5c",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7195759+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/CHAOS-DEMO-RG/providers/Microsoft.Compute/disks/renzo-demo-vmss_3a6899ac_OsDisk_1_bbe4c450495344c390180188ae5800da",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo-vmss_3a6899ac_OsDisk_1_bbe4c450495344c390180188ae5800da",
+      "resourceType": "microsoft.compute/disks",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/aa31832a-7a70-82d4-ce18-33ed31e0be30",
+    "name": "aa31832a-7a70-82d4-ce18-33ed31e0be30",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719602+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_2459858f/extensions/Microsoft.Azure.Monitor.AzureMonitorLinuxAgent",
+      "namespace": "Arm",
+      "resourceName": "Microsoft.Azure.Monitor.AzureMonitorLinuxAgent",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/abf7a28e-f6f4-3eed-9b79-0af89e35ca62",
+    "name": "abf7a28e-f6f4-3eed-9b79-0af89e35ca62",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7195999+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_2459858f/extensions/AzurePolicyforLinux",
+      "namespace": "Arm",
+      "resourceName": "AzurePolicyforLinux",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/cd407e70-5af5-23e0-350f-a1daefbac212",
+    "name": "cd407e70-5af5-23e0-350f-a1daefbac212",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719618+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_3a6899ac/extensions/Microsoft.Azure.Monitor.AzureMonitorLinuxAgent",
+      "namespace": "Arm",
+      "resourceName": "Microsoft.Azure.Monitor.AzureMonitorLinuxAgent",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/d9dc77f2-9c04-9a88-978f-92fd8637818a",
+    "name": "d9dc77f2-9c04-9a88-978f-92fd8637818a",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196093+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_3a6899ac",
+      "namespace": "Arm",
+      "resourceName": "renzo-demo-vmss_3a6899ac",
+      "resourceType": "microsoft.compute/virtualmachines",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/eac6e3d5-6bb2-7e1d-9758-9bb86bf74e5d",
+    "name": "eac6e3d5-6bb2-7e1d-9758-9bb86bf74e5d",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719676+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/publicIPAddresses/publicIp-vnet-westus2-2-nic01-4f5a6b85",
+      "namespace": "Arm",
+      "resourceName": "publicIp-vnet-westus2-2-nic01-4f5a6b85",
+      "resourceType": "microsoft.network/publicipaddresses",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/f02deb21-0e2e-8ee5-cfbb-68d04f22e9d8",
+    "name": "f02deb21-0e2e-8ee5-cfbb-68d04f22e9d8",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.719679+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Network/publicIPAddresses/publicIp-vnet-westus2-2-nic01-a25c4a41",
+      "namespace": "Arm",
+      "resourceName": "publicIp-vnet-westus2-2-nic01-a25c4a41",
+      "resourceType": "microsoft.network/publicipaddresses",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  },
+  {
+    "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/discoveredResources/f2f6b78b-5b4a-08fd-cb7d-ee571d93c5ff",
+    "name": "f2f6b78b-5b4a-08fd-cb7d-ee571d93c5ff",
+    "properties": {
+      "discoveredAt": "2026-05-28T17:10:59.7196203+00:00",
+      "fullyQualifiedIdentifier": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Compute/virtualMachines/renzo-demo-vmss_3a6899ac/extensions/Microsoft.Azure.Security.Monitoring.AzureSecurityLinuxAgent",
+      "namespace": "Arm",
+      "resourceName": "Microsoft.Azure.Security.Monitoring.AzureSecurityLinuxAgent",
+      "resourceType": "microsoft.compute/virtualmachines/extensions",
+      "scope": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourcegroups/chaos-demo-rg"
+    },
+    "resourceGroup": "chaos-demo-rg",
+    "type": "Microsoft.Chaos/workspaces/discoveredResources"
+  }
+]

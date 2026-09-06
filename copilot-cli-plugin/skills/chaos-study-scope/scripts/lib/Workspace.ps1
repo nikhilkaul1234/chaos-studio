@@ -631,10 +631,10 @@ function Resolve-ChaosBlastRadiusResource {
         see the resource list a run would touch *before* consenting, instead
         of discovering it from the run summary afterwards.
 
-        It is explicitly advisory. The service resolves physical zones and tag
-        exclusions at execution time, so this cannot be exact when those are
-        used; callers surface that as a limitation rather than presenting the
-        projection as the final set.
+        It is explicitly advisory. Missing local zone data is not evidence of
+        a mismatch: retain those candidates until the service applies the
+        frozen filter and the post-validation guard checks target metadata.
+        Physical zones and unknown tag exclusions are also service-resolved.
     #>
     [CmdletBinding()]
     param(
@@ -658,9 +658,15 @@ function Resolve-ChaosBlastRadiusResource {
         $wantedZones = Get-ChaosBlastRadiusMember -Container $filters -Name 'zones'
         if ($null -ne $wantedZones) {
             $zoneSet = @(@($wantedZones) | ForEach-Object { [string]$_ })
+            $unknownZones = @($candidates | Where-Object {
+                @(Get-ChaosBlastRadiusMember -Container $_ -Name zones | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -eq 0
+            })
+            if ($unknownZones.Count -gt 0) {
+                Write-ChaosStudyNote -Level warn -Message 'Some discovered resources have no zone data. The local resource preview conservatively retains them; the service must apply the zone filter and executable target metadata must satisfy it before approval.'
+            }
             $candidates = @($candidates | Where-Object {
-                    $owned = @(@($_.zones) | ForEach-Object { [string]$_ })
-                    @($owned | Where-Object { $zoneSet -contains $_ }).Count -gt 0
+                    $owned = @(Get-ChaosBlastRadiusMember -Container $_ -Name zones | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                    $owned.Count -eq 0 -or @($owned | Where-Object { $zoneSet -contains $_ }).Count -gt 0
                 })
         }
     }
