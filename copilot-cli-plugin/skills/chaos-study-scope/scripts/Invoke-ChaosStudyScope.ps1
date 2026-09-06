@@ -778,12 +778,33 @@ if (-not $SkipDiscovery) {
     $preflight = New-ChaosPreflightConfiguration -StudyId $study.studyId `
         -Plan $preflightPlan -Adapter $Adapter -StudyPath $study.path
 
-    $effectiveLegs = Resolve-ChaosEffectiveLegs -ExecutionPlan $preflight.executionPlan
+    $removeUnverifiedPreflight = {
+        Invoke-ChaosResidueRemoval -StudyPath $study.path -Kind preflightConfiguration -Id $preflight.name -Removal {
+            Remove-ChaosStudyConfiguration -Plan $preflightPlan -ConfigurationName $preflight.name -Adapter $Adapter -StudyPath $study.path
+        } | Out-Null
+    }
+    $rawExecutionPlan = Get-ChaosLegField -Leg $preflight.executionPlan -Names @('executionPlanJson')
+    if ($null -eq $rawExecutionPlan) {
+        $rawExecutionPlan = Get-ChaosLegField -Leg (Get-ChaosLegField -Leg $preflight.executionPlan -Names @('properties')) -Names @('executionPlanJson')
+    }
+    if ($rawExecutionPlan -is [string]) {
+        Save-ChaosStudyArtifact -StudyPath $study.path -RelativePath 'evidence/preflight/execution-plan.json' -Content $rawExecutionPlan -AsText | Out-Null
+    }
+    try {
+        $effectiveLegs = Resolve-ChaosEffectiveLegs -ExecutionPlan $preflight.executionPlan
+    } catch {
+        if ($_.Exception.Message -notlike 'InvalidExecutionPlan:*') { throw }
+        Write-ChaosStudyFailure -Title 'Execution plan is unreadable' -Message $_.Exception.Message `
+            -Remediation 'Inspect evidence/preflight/execution-plan.json and obtain a valid service execution plan before re-scoping.'
+        & $removeUnverifiedPreflight
+        exit (Get-ChaosStudyExitCode -Name ScopeUnverified)
+    }
 
-    Assert-ChaosScenarioNameHonest -ScenarioName $selectedScenario.name -DisplayName $selectedScenario.displayName -EffectiveLegs $effectiveLegs | Out-Null
+    Assert-ChaosScenarioNameHonest -ScenarioName $selectedScenario.name -DisplayName $selectedScenario.displayName -EffectiveLegs $effectiveLegs `
+        -OnScopeUnverified $removeUnverifiedPreflight | Out-Null
 
     $legsDecision = Assert-ChaosEffectiveLegs -EffectiveLegs $effectiveLegs -ScopeHash $scopeHash `
-        -ScenarioName $selectedScenario.name -AcceptPartialScenario $AcceptPartialScenario
+        -ScenarioName $selectedScenario.name -AcceptPartialScenario $AcceptPartialScenario -OnScopeUnverified $removeUnverifiedPreflight
 
     if ($legsDecision.limitationCodes -contains 'L11' -and $limitationCodes -notcontains 'L11') {
         $limitationCodes += 'L11'

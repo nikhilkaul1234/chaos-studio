@@ -3,7 +3,11 @@ param(
     [Parameter(Mandatory)][string]$StudyRoot,
     [int]$BaselineMinutes = 5,
     [Nullable[int]]$UnavailableIntervals,
-    [switch]$NoBuckets
+    [switch]$NoBuckets,
+    [string]$ExecutionPlanPath,
+    [ValidateSet('success', 'absent', 'present')][string]$DeleteResult = 'success',
+    [string]$ScenarioName = 'fixture',
+    [string]$AcceptPartialScenario
 )
 $ErrorActionPreference = 'Stop'
 if (Get-Command az -CommandType Application -ErrorAction SilentlyContinue) { throw 'Real Azure CLI must not be reachable in this fixture.' }
@@ -33,7 +37,7 @@ function global:az {
         return '{"properties":{"status":"Succeeded","numScenariosEvaluatedSucceeded":1,"numScenariosEvaluatedFailed":0}}'
     }
     if ($command -like 'chaos scenario list *') {
-        return (@{ value = @(@{ id = "$global:FixtureWorkspace/scenarios/fixture"; name = 'fixture'
+        return (@{ value = @(@{ id = "$global:FixtureWorkspace/scenarios/$ScenarioName"; name = $ScenarioName
             properties = @{ displayName = 'Fixture'; version = '1.0'; description = 'offline'
                 recommendation = @{ recommendationStatus = 'Recommended' }; parameters = @() } }) } | ConvertTo-Json -Depth 10)
     }
@@ -54,20 +58,33 @@ function global:az {
     }
     if ($command -like 'chaos scenario config create *') {
         $i = [array]::IndexOf($args, '-n')
+        $global:FixtureConfigurationName = $args[$i + 1]
         return (@{ name = $args[$i + 1] } | ConvertTo-Json)
     }
     if ($command -like 'chaos scenario config validate *') {
+        if ($ExecutionPlanPath) {
+            return (@{ status = 'Succeeded'; executionPlanJson = [IO.File]::ReadAllText($ExecutionPlanPath) } | ConvertTo-Json -Depth 10)
+        }
         return '{"status":"Succeeded","legs":[{"legSelector":"vm","action":"fixture-action","executable":true}]}'
+    }
+    if ($command -like 'chaos scenario config delete *') {
+        if ($DeleteResult -ne 'success') { $global:LASTEXITCODE = 1; return 'BadRequest: Nullable object must have a value.' }
+        return
+    }
+    if ($command -like 'chaos scenario config list *') {
+        if ($DeleteResult -eq 'absent') { return '[]' }
+        return (@{ value = @(@{ name = $global:FixtureConfigurationName }) } | ConvertTo-Json -Depth 10)
     }
     throw "Unexpected offline fixture operation: $command"
 }
 $scopeArgs = @{
     SubscriptionId = 'sub'; ResourceGroup = 'rg'; WorkspaceName = 'ws'; StudyRoot = $StudyRoot
-    Scenario = 'fixture'; Action = 'fixture-action'; SteadyState = 'Availability >= 1'
+    Scenario = $ScenarioName; Action = 'fixture-action'; SteadyState = 'Availability >= 1'
     SignalSource = @('metrics:Availability'); FailureMechanism = 'CPU pressure changes availability'
     MechanismEvidence = 'Offline fixture VM'; MechanismProbe = @{ signal = 'Availability'; expectedDirection = 'down'; resourceCorrelation = $global:FixtureTarget }
     EventRatePerSecond = 1; EligibleFraction = 1; BaselineMinutes = $BaselineMinutes
 }
 if ($null -ne $UnavailableIntervals) { $scopeArgs.UnavailableIntervals = $UnavailableIntervals }
+if ($AcceptPartialScenario) { $scopeArgs.AcceptPartialScenario = $AcceptPartialScenario }
 & "$Skills/chaos-study-scope/scripts/Invoke-ChaosStudyScope.ps1" @scopeArgs
 exit $LASTEXITCODE

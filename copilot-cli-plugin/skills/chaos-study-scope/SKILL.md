@@ -94,12 +94,18 @@ Useful switches:
   `filters` and `exclusions`
 - `-SignalSource` — the evidence to collect (`metrics:` / `logs:`); no defaults
   are invented for you
+- `-UnavailableIntervals` — optional missing-signal tolerance, which must be at
+  least the minimum derived from live telemetry age. Scoping samples twice, one
+  metric grain apart, and requires a baseline covering at least two grains.
 - `-Hypothesis` — what you expect to happen, recorded for honesty at report time
 - `-SkipDiscovery` — plan without contacting Azure. The plan then carries
   limitation `L10` and records the scenario and action as `unverified-offline`;
   no metadata is fabricated, and the run still validates before executing.
 
-Output is a frozen `study-plan.v3.json` plus a study id. Nothing is executed.
+Output is a frozen `study-plan.v4.json` plus a study id. Nothing is executed.
+`discovery.telemetryLag` records the query times, newest non-null bucket times,
+observed ages, derived minimum, and selected missing-signal tolerance. Review
+these samples with the approval preview.
 
 ## What the plan records
 
@@ -180,3 +186,8 @@ Review the plan, then run it with explicit consent:
 ```powershell
 chaos-study-run -StudyId <studyId> -DryRun:$false -Consent '<phrase from the plan>'
 ```
+
+The front door also accepts `chaos-study -StudyId <studyId>` to preview the same
+frozen study. Add `-DryRun:$false -Consent '<phrase from that preview>'` only
+after fresh human approval; `-StudyId` resumes without creating a new scope.
+Reuse `-StudyRoot` when the study is in a non-default store.

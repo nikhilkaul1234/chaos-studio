@@ -42,6 +42,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'ApiVersions.ps1')
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Operation.ps1')
 . (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'Residue.ps1')
+. (Join-Path $PSScriptRoot '..' '..' '..' 'chaos-study' 'scripts' 'lib' 'ExecutionPlan.ps1')
 
 # -- Adapter resolution ----------------------------------------------------
 
@@ -1210,25 +1211,6 @@ instead.
 # Either way, what executes is provably what was scoped and consented to, not a
 # configuration that quietly drifted between scope and run.
 
-function Get-ChaosRunLegField {
-    <#
-    .SYNOPSIS
-        Read the first present field from a leg-like object across aliases. A
-        run-side mirror of the scope resolver's field lookup, kept here so the
-        run skill needs nothing from the scope skill's library.
-    #>
-    param([AllowNull()][object]$Leg, [Parameter(Mandatory)][string[]]$Names)
-    if ($null -eq $Leg) { return $null }
-    foreach ($name in $Names) {
-        if ($Leg -is [System.Collections.IDictionary]) {
-            if ($Leg.Contains($name) -and $null -ne $Leg[$name]) { return $Leg[$name] }
-        } elseif ($Leg -is [pscustomobject]) {
-            if (($Leg.PSObject.Properties.Name -contains $name) -and $null -ne $Leg.$name) { return $Leg.$name }
-        }
-    }
-    return $null
-}
-
 function Get-ChaosRunEffectivePlanHash {
     <#
     .SYNOPSIS
@@ -1243,54 +1225,18 @@ function Get-ChaosRunEffectivePlanHash {
         "the same legs execute", which is what a run must guarantee, rather than
         "the service worded its reasons identically".
 
-        This is the run-side MIRROR of the scope-side projection built by
-        Resolve-ChaosEffectiveLegs / Test-ChaosLegSkipped in Readiness.ps1. The
-        two must stay in lockstep: the skip signals inspected here (executable
-        flag, skip reason, skip status, and the `skipped` boolean) are exactly
-        those the scope side inspects. If the scope projection shape ever
-        changes, this mirror must change with it or Assert-ChaosEffectivePlanEquality
-        will diverge on a plan that actually matches.
-
-        KNOWN LIMITATION: unlike Get-ChaosExecutionPlanLegs on the scope side,
-        this normalizer only reads direct `legs`/`effectiveLegs` fields and does
-        not expand a steps->branches->actions->targets tree. If the platform ever
-        returns validation with only a steps tree, this hash would be over an
-        empty projection while the scope hash would not, tripping the equality
-        gate; the run mirror must gain the same expansion in lockstep should the
-        scope side ever rely on it.
+        Scope and run share ExecutionPlan.ps1 for parsing, skip signals and
+        selector identity, including live executionPlanJson and legacy shapes.
     #>
     param([AllowNull()][object]$Validation)
 
-    $roots = @()
-    if ($null -ne $Validation) {
-        $roots += $Validation
-        if (($Validation.PSObject.Properties.Name -contains 'properties') -and $null -ne $Validation.properties) {
-            $roots += $Validation.properties
-        }
-        if (($Validation.PSObject.Properties.Name -contains 'executionPlan') -and $null -ne $Validation.executionPlan) {
-            $roots += $Validation.executionPlan
-        }
-    }
-
-    $legs = @()
-    foreach ($root in $roots) {
-        $found = Get-ChaosRunLegField -Leg $root -Names @('legs', 'effectiveLegs')
-        if ($null -ne $found) { $legs = @($found); break }
-    }
+    $legs = @(Get-ChaosExecutionPlanLegs -ExecutionPlan $Validation)
 
     $skippedSelectors = @()
     $executable = 0
     foreach ($leg in $legs) {
-        $selector = [string](Get-ChaosRunLegField -Leg $leg -Names @('legSelector', 'selector', 'targetSelector', 'resourceSelector', 'resourceId', 'id', 'key', 'name'))
-        $reason = Get-ChaosRunLegField -Leg $leg -Names @('reason', 'skipReason', 'skippedReason')
-        $status = [string](Get-ChaosRunLegField -Leg $leg -Names @('status', 'state'))
-        $executableFlag = Get-ChaosRunLegField -Leg $leg -Names @('executable', 'willExecute', 'included')
-        $skippedBool = Get-ChaosRunLegField -Leg $leg -Names @('skipped')
-        $skipStates = @('skipped', 'notapplicable', 'not-applicable', 'excluded', 'unsupported', 'notsupported', 'ineligible', 'filtered')
-        $isSkipped = ($executableFlag -is [bool] -and -not $executableFlag) -or
-            ($skippedBool -is [bool] -and $skippedBool) -or
-            (-not [string]::IsNullOrWhiteSpace([string]$reason)) -or
-            ((-not [string]::IsNullOrWhiteSpace($status)) -and ($skipStates -contains $status.Trim().ToLowerInvariant().Replace(' ', '')))
+        $selector = Get-ChaosLegSelectorText -Leg $leg
+        $isSkipped = Test-ChaosLegSkipped -Leg $leg
         if ($isSkipped) { $skippedSelectors += $selector } else { $executable++ }
     }
 
