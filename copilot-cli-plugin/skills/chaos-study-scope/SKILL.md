@@ -107,6 +107,22 @@ Output is a frozen `study-plan.v4.json` plus a study id. Nothing is executed.
 observed ages, derived minimum, and selected missing-signal tolerance. Review
 these samples with the approval preview.
 
+### Zone declarations
+
+Zone honesty uses effective `Zones` parameters (explicit values override their
+spec defaults) and `filters.zones` before interpreting a scenario name. When
+multiple declarations apply, every executable target must report
+`metadata.zones` within all of them. Unknown metadata or any out-of-bound zone
+refuses the scope with exit `14` and bounded preflight cleanup.
+
+Without a parameter or filter declaration, the legacy name grammar recognizes
+case-insensitive `zoneN`, `zone-N`, `zone_N`, `zone N` and standalone `azN`,
+where `N` is a sequence of digits. Targetless legacy legs retain their
+selector-based check. The captured service name `ZoneDown-1.0` has scenario
+version `1.0`; it does not declare zone 1. Its shutdown actions bind zones to
+`filters.zones`. To claim zone 1 for that scenario, explicitly use
+`-FilterZone 1`; do not infer a zone from the version suffix.
+
 ## What the plan records
 
 The plan is the contract the rest of the suite reads:

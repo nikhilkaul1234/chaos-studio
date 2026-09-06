@@ -1,0 +1,692 @@
+{
+  "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/resourceGroups/chaos-demo-rg/providers/Microsoft.Chaos/workspaces/renzo-ws-vmss-test/scenarios/ZoneDown-1.0",
+  "name": "ZoneDown-1.0",
+  "properties": {
+    "actions": [
+      {
+        "actionId": "microsoft-compute-shutdown/1.0",
+        "description": "Force shutdown VMSS instances in target zone",
+        "duration": "%%{parameters.duration}%%",
+        "name": "vmssZoneDown",
+        "parameters": [
+          {
+            "key": "zones",
+            "value": "%%{filters.zones}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-compute-shutdown/1.0",
+        "description": "Force shutdown VM instances in target zone",
+        "duration": "%%{parameters.duration}%%",
+        "name": "vmZoneDown",
+        "parameters": [
+          {
+            "key": "zones",
+            "value": "%%{filters.zones}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-azureClusteredCacheForRedis-Reboot/1.0",
+        "description": "Force failover of Redis instances to simulate backend zonal outage",
+        "name": "redisFailover",
+        "parameters": [
+          {
+            "key": "RebootType",
+            "value": "PrimaryNode"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 1",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook1ResourceId}%%"
+        },
+        "name": "custom-runbook-1",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook1ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 2",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook2ResourceId}%%"
+        },
+        "name": "custom-runbook-2",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook2ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 3",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook3ResourceId}%%"
+        },
+        "name": "custom-runbook-3",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook3ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 4",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook4ResourceId}%%"
+        },
+        "name": "custom-runbook-4",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook4ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 5",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook5ResourceId}%%"
+        },
+        "name": "custom-runbook-5",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook5ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 6",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook6ResourceId}%%"
+        },
+        "name": "custom-runbook-6",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook6ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 7",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook7ResourceId}%%"
+        },
+        "name": "custom-runbook-7",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook7ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 8",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook8ResourceId}%%"
+        },
+        "name": "custom-runbook-8",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook8ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 9",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook9ResourceId}%%"
+        },
+        "name": "custom-runbook-9",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook9ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 10",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook10ResourceId}%%"
+        },
+        "name": "custom-runbook-10",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook10ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 11",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook11ResourceId}%%"
+        },
+        "name": "custom-runbook-11",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook11ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 12",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook12ResourceId}%%"
+        },
+        "name": "custom-runbook-12",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook12ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 13",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook13ResourceId}%%"
+        },
+        "name": "custom-runbook-13",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook13ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 14",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook14ResourceId}%%"
+        },
+        "name": "custom-runbook-14",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook14ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 15",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook15ResourceId}%%"
+        },
+        "name": "custom-runbook-15",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook15ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 16",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook16ResourceId}%%"
+        },
+        "name": "custom-runbook-16",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook16ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 17",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook17ResourceId}%%"
+        },
+        "name": "custom-runbook-17",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook17ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 18",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook18ResourceId}%%"
+        },
+        "name": "custom-runbook-18",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook18ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 19",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook19ResourceId}%%"
+        },
+        "name": "custom-runbook-19",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook19ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      },
+      {
+        "actionId": "microsoft-Automation-StartRunbook/1.0",
+        "description": "Custom Runbook 20",
+        "externalResource": {
+          "resourceId": "%%{parameters.customRunbook20ResourceId}%%"
+        },
+        "name": "custom-runbook-20",
+        "parameters": [
+          {
+            "key": "RunbookParameters",
+            "value": "%%{parameters.customRunbook20ParametersJson}%%"
+          }
+        ],
+        "runAfter": {
+          "behavior": "All",
+          "items": []
+        }
+      }
+    ],
+    "description": "Induces an outage of all discovered VM and VMSS instances in the target zone with an option to invoke custom scripted actions using Automation Runbooks. Additionally, it forces failover of discovered Redis instances to simulate backend zonal outage.",
+    "parameters": [
+      {
+        "default": "PT15M",
+        "description": "The duration of the outage scenario.",
+        "name": "duration",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 1 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook1ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 1 parameters in JSON format.",
+        "name": "customRunbook1ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 2 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook2ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 2 parameters in JSON format.",
+        "name": "customRunbook2ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 3 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook3ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 3 parameters in JSON format.",
+        "name": "customRunbook3ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 4 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook4ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 4 parameters in JSON format.",
+        "name": "customRunbook4ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 5 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook5ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 5 parameters in JSON format.",
+        "name": "customRunbook5ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 6 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook6ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 6 parameters in JSON format.",
+        "name": "customRunbook6ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 7 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook7ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 7 parameters in JSON format.",
+        "name": "customRunbook7ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 8 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook8ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 8 parameters in JSON format.",
+        "name": "customRunbook8ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 9 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook9ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 9 parameters in JSON format.",
+        "name": "customRunbook9ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 10 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook10ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 10 parameters in JSON format.",
+        "name": "customRunbook10ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 11 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook11ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 11 parameters in JSON format.",
+        "name": "customRunbook11ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 12 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook12ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 12 parameters in JSON format.",
+        "name": "customRunbook12ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 13 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook13ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 13 parameters in JSON format.",
+        "name": "customRunbook13ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 14 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook14ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 14 parameters in JSON format.",
+        "name": "customRunbook14ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 15 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook15ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 15 parameters in JSON format.",
+        "name": "customRunbook15ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 16 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook16ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 16 parameters in JSON format.",
+        "name": "customRunbook16ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 17 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook17ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 17 parameters in JSON format.",
+        "name": "customRunbook17ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 18 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook18ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 18 parameters in JSON format.",
+        "name": "customRunbook18ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 19 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook19ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 19 parameters in JSON format.",
+        "name": "customRunbook19ParametersJson",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "description": "Optional custom runbook 20 resource ID. If not provided, this action will be skipped.",
+        "name": "customRunbook20ResourceId",
+        "required": false,
+        "type": "String"
+      },
+      {
+        "default": "{}",
+        "description": "Optional custom runbook 20 parameters in JSON format.",
+        "name": "customRunbook20ParametersJson",
+        "required": false,
+        "type": "String"
+      }
+    ],
+    "provisioningState": "Succeeded",
+    "recommendation": {
+      "recommendationStatus": "Recommended"
+    },
+    "version": "1.0"
+  },
+  "resourceGroup": "chaos-demo-rg",
+  "type": "Microsoft.Chaos/workspaces/scenarios"
+}

@@ -10,7 +10,8 @@ function Get-ChaosLegField {
         if ($Leg -is [System.Collections.IDictionary]) {
             if ($Leg.Contains($name) -and $null -ne $Leg[$name]) { return $Leg[$name] }
         } elseif ($Leg -is [pscustomobject]) {
-            if (($Leg.PSObject.Properties.Name -contains $name) -and $null -ne $Leg.$name) { return $Leg.$name }
+            $property = $Leg.PSObject.Properties[$name]
+            if ($null -ne $property -and $null -ne $property.Value) { return $property.Value }
         }
     }
     return $null

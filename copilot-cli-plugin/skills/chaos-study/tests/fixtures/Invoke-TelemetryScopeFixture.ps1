@@ -8,7 +8,9 @@ param(
     [ValidateSet('success', 'absent', 'present')][string]$DeleteResult = 'success',
     [string]$ScenarioName = 'fixture',
     [string]$AcceptPartialScenario,
-    [string]$ConfigurationInventoryPath
+    [string]$ConfigurationInventoryPath,
+    [string[]]$FilterZone = @(),
+    [switch]$UseLiveZoneDefinitions
 )
 $ErrorActionPreference = 'Stop'
 if (Get-Command az -CommandType Application -ErrorAction SilentlyContinue) { throw 'Real Azure CLI must not be reachable in this fixture.' }
@@ -16,6 +18,13 @@ $global:FixtureTarget = '/subscriptions/sub/resourceGroups/rg/providers/Microsof
 $global:FixtureWorkspace = '/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Chaos/workspaces/ws'
 $global:MetricQueries = 0
 $global:FixtureConfigurations = @()
+$global:FixtureScenarioDefinition = $null
+$global:FixtureActionDefinition = $null
+if ($UseLiveZoneDefinitions) {
+    $global:FixtureScenarioDefinition = Get-Content "$PSScriptRoot/live-zone-down-scenario.json" -Raw | ConvertFrom-Json
+    $global:FixtureActionDefinition = Get-Content "$PSScriptRoot/live-shutdown-action.json" -Raw | ConvertFrom-Json
+    $ScenarioName = $global:FixtureScenarioDefinition.name
+}
 if ($ConfigurationInventoryPath -and (Test-Path -LiteralPath $ConfigurationInventoryPath)) {
     $global:FixtureConfigurations = @(Get-Content -LiteralPath $ConfigurationInventoryPath -Raw | ConvertFrom-Json)
 }
@@ -36,17 +45,19 @@ function global:az {
             identity = @{ type = 'SystemAssigned'; principalId = 'principal' } } | ConvertTo-Json -Depth 10)
     }
     if ($command -like 'chaos discovered-resource list *') {
-        return (@{ value = @(@{ name = 'vm'; fullyQualifiedIdentifier = $global:FixtureTarget; resourceType = 'microsoft.compute/virtualmachines'; location = 'westus2' }) } | ConvertTo-Json -Depth 10)
+        return (@{ value = @(@{ name = 'vm'; fullyQualifiedIdentifier = $global:FixtureTarget; resourceType = 'microsoft.compute/virtualmachines'; location = 'westus2'; properties = @{ zones = @('1') } }) } | ConvertTo-Json -Depth 10)
     }
     if ($command -like 'chaos workspace show-evaluation *') {
         return '{"properties":{"status":"Succeeded","numScenariosEvaluatedSucceeded":1,"numScenariosEvaluatedFailed":0}}'
     }
     if ($command -like 'chaos scenario list *') {
+        if ($null -ne $global:FixtureScenarioDefinition) { return (@{ value = @($global:FixtureScenarioDefinition) } | ConvertTo-Json -Depth 20) }
         return (@{ value = @(@{ id = "$global:FixtureWorkspace/scenarios/$ScenarioName"; name = $ScenarioName
             properties = @{ displayName = 'Fixture'; version = '1.0'; description = 'offline'
                 recommendation = @{ recommendationStatus = 'Recommended' }; parameters = @() } }) } | ConvertTo-Json -Depth 10)
     }
     if ($command -like 'rest *' -and $command -like '*/locations/westus2/actions*') {
+        if ($null -ne $global:FixtureActionDefinition) { return (@{ value = @($global:FixtureActionDefinition) } | ConvertTo-Json -Depth 20) }
         return (@{ value = @(@{ name = 'fixture-action'; properties = @{
             actionName = 'fixture-action'; canonicalId = 'urn:fixture:action'; actionType = 'Continuous'
             displayName = 'Fixture'; description = 'offline'; version = '1.0'
@@ -102,5 +113,7 @@ $scopeArgs = @{
 }
 if ($null -ne $UnavailableIntervals) { $scopeArgs.UnavailableIntervals = $UnavailableIntervals }
 if ($AcceptPartialScenario) { $scopeArgs.AcceptPartialScenario = $AcceptPartialScenario }
+if ($FilterZone.Count) { $scopeArgs.FilterZone = $FilterZone }
+if ($null -ne $global:FixtureActionDefinition) { $scopeArgs.Action = $global:FixtureActionDefinition.name }
 & "$Skills/chaos-study-scope/scripts/Invoke-ChaosStudyScope.ps1" @scopeArgs
 exit $LASTEXITCODE

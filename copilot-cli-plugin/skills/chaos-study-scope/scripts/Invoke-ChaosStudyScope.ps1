@@ -773,6 +773,7 @@ if (-not $SkipDiscovery) {
     $preflightPlan = [pscustomobject]@{
         workspace = [pscustomobject]@{ subscriptionId = $SubscriptionId; resourceGroup = $ResourceGroup; name = $WorkspaceName }
         scenario = [pscustomobject]@{ name = $selectedScenario.name; parameters = $scenarioParameters; parameterSpec = @($selectedScenario.parameters) }
+        action = $selectedAction
         scope = [pscustomobject]@{ blastRadius = $blastRadius }
     }
     $preflight = New-ChaosPreflightConfiguration -StudyId $study.studyId `
@@ -801,7 +802,7 @@ if (-not $SkipDiscovery) {
     }
 
     Assert-ChaosScenarioNameHonest -ScenarioName $selectedScenario.name -DisplayName $selectedScenario.displayName -EffectiveLegs $effectiveLegs `
-        -OnScopeUnverified $removeUnverifiedPreflight | Out-Null
+        -Plan $preflightPlan -OnScopeUnverified $removeUnverifiedPreflight | Out-Null
 
     $legsDecision = Assert-ChaosEffectiveLegs -EffectiveLegs $effectiveLegs -ScopeHash $scopeHash `
         -ScenarioName $selectedScenario.name -AcceptPartialScenario $AcceptPartialScenario -OnScopeUnverified $removeUnverifiedPreflight

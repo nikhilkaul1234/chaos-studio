@@ -543,6 +543,7 @@ function Resolve-ChaosEffectiveLegs {
     $skipped = @()
     $executableSelectors = @()
     $executableZones = $null
+    $unknownTargetZones = $false
 
     foreach ($leg in $legs) {
         $selector = Get-ChaosLegSelectorText -Leg $leg
@@ -559,9 +560,12 @@ function Resolve-ChaosEffectiveLegs {
             $executableSelectors += $selector
             if (($leg -is [System.Collections.IDictionary] -and $leg.Contains('targets')) -or $leg.PSObject.Properties.Name -contains 'targets') {
                 if ($null -eq $executableZones) { $executableZones = @() }
+                if (@($leg.targets).Count -eq 0) { $unknownTargetZones = $true }
                 foreach ($target in @($leg.targets)) {
                     $metadata = Get-ChaosLegField -Leg $target -Names @('metadata')
-                    $executableZones += @(Get-ChaosLegField -Leg $metadata -Names @('zones') | Where-Object { $_ })
+                    $targetZones = @(Get-ChaosLegField -Leg $metadata -Names @('zones') | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+                    if ($targetZones.Count -eq 0) { $unknownTargetZones = $true }
+                    $executableZones += $targetZones
                 }
             }
         }
@@ -576,6 +580,7 @@ function Resolve-ChaosEffectiveLegs {
         skipped             = @($skipped)
         executableSelectors = @($executableSelectors)
         executableZones     = $executableZones
+        unknownTargetZones  = $unknownTargetZones
     }
 }
 
@@ -735,55 +740,119 @@ function Format-ChaosSkippedLegs {
         }) -join "`n"
 }
 
+function Get-ChaosDeclaredZoneClaim {
+    param([AllowNull()][object]$Plan)
+    $scenario = Get-ChaosMember -InputObject $Plan -Name scenario
+    $scenarioValue = $null
+    foreach ($spec in @(Get-ChaosMember -InputObject $scenario -Name parameterSpec)) {
+        if ((Get-ChaosMember -InputObject $spec -Name name) -ieq 'Zones') {
+            $scenarioValue = Get-ChaosMember -InputObject $spec -Name default
+        }
+    }
+    foreach ($pair in @(Get-ChaosMember -InputObject $scenario -Name parameters)) {
+        if ((Get-ChaosMember -InputObject $pair -Name key) -ieq 'Zones') {
+            $scenarioValue = Get-ChaosMember -InputObject $pair -Name value
+        }
+    }
+    $action = Get-ChaosMember -InputObject $Plan -Name action
+    $schema = Get-ChaosMember -InputObject $action -Name parametersSchema
+    $properties = Get-ChaosMember -InputObject $schema -Name properties
+    $actionZone = Get-ChaosMember -InputObject $properties -Name Zones
+    $actionValue = Get-ChaosMember -InputObject $actionZone -Name default
+    foreach ($pair in @(Get-ChaosMember -InputObject $action -Name parameters)) {
+        if ((Get-ChaosMember -InputObject $pair -Name key) -ieq 'Zones') {
+            $actionValue = Get-ChaosMember -InputObject $pair -Name value
+        }
+    }
+    $scope = Get-ChaosMember -InputObject $Plan -Name scope
+    $blast = Get-ChaosMember -InputObject $scope -Name blastRadius
+    $filters = Get-ChaosMember -InputObject $blast -Name filters
+    $candidates = @(
+        @{ source = 'scenario Zones'; value = $scenarioValue }
+        @{ source = 'action Zones'; value = $actionValue }
+        @{ source = 'filters.zones'; value = (Get-ChaosMember -InputObject $filters -Name zones) }
+    )
+    $declared = $null
+    $sources = @()
+    foreach ($candidate in $candidates) {
+        $value = $candidate.value
+        if ($value -is [string] -and ($value.TrimStart().StartsWith('[') -or $value -eq 'null')) {
+            try { $value = ConvertFrom-Json -InputObject $value -NoEnumerate -ErrorAction Stop }
+            catch { throw "InvalidZoneClaim: $($candidate.source) is not a valid zone array." }
+        }
+        if ($null -eq $value) { continue }
+        $zones = @(foreach ($zone in @($value)) {
+            if ($zone -isnot [string] -or [string]::IsNullOrWhiteSpace($zone) -or $zone -like '*%%*') {
+                throw "InvalidZoneClaim: $($candidate.source) must contain resolved nonempty zone strings."
+            }
+            $zone
+        })
+        if ($null -eq $declared) { $declared = $zones }
+        else { $declared = @($declared | Where-Object { $zones -contains $_ }) }
+        $sources += $candidate.source
+    }
+    return [pscustomobject]@{ hasClaim = ($sources.Count -gt 0); zones = @($declared); source = $sources -join ', ' }
+}
+
 function Assert-ChaosScenarioNameHonest {
     <#
     .SYNOPSIS
         Block a scenario name that implies legs which will not run.
 
     .DESCRIPTION
-        A name like "zone-1-down" claims a specific zone. If the executable legs
-        contain no leg for that zone, the name overstates what the study
-        exercises, so the resulting report would mislead. This guard checks the
-        concrete, machine-readable claim - zone numbers named in the scenario or
-        its display name - against the zones present in the executable legs, and
-        stops (ScopeUnverified, 14) when a claimed zone is absent. Generic names
-        with no zone number are left alone; truthfulness of the wider claim
-        remains the agent's and reviewer's responsibility.
+        Effective zone parameters and filters take precedence over names.
+        Every executable target must have known zones within that boundary.
+        Without a parameter claim, legacy name forms zoneN, zone-N, zone_N,
+        zone N and standalone azN still apply. ZoneDown-1.0 is a versioned
+        service name, not evidence of zone 1. Targetless legacy plans retain
+        their selector-based coverage check.
     #>
     param(
         [Parameter(Mandatory)][string]$ScenarioName,
         [AllowNull()][AllowEmptyString()][string]$DisplayName = $null,
         [Parameter(Mandatory)][object]$EffectiveLegs,
+        [AllowNull()][object]$Plan,
         [scriptblock]$OnScopeUnverified
     )
 
+    try {
+        $claim = Get-ChaosDeclaredZoneClaim -Plan $Plan
+    } catch {
+        if ($_.Exception.Message -notlike 'InvalidZoneClaim:*') { throw }
+        Write-ChaosStudyFailure -Title 'Zone declaration is unresolved' -Message $_.Exception.Message
+        if ($OnScopeUnverified) { & $OnScopeUnverified | Out-Null }
+        exit (Get-ChaosStudyExitCode -Name ScopeUnverified)
+    }
     $nameText = @($ScenarioName, $DisplayName) -join ' '
     $claimedZones = @([regex]::Matches($nameText, '(?i)zone[\s_-]?([0-9]+)') | ForEach-Object { $_.Groups[1].Value })
     $claimedZones += @([regex]::Matches($nameText, '(?i)\baz([0-9]+)\b') | ForEach-Object { $_.Groups[1].Value })
+    if ($claim.hasClaim) { $claimedZones = $claim.zones }
     $claimedZones = @($claimedZones | Where-Object { $_ } | Select-Object -Unique)
-    if ($claimedZones.Count -eq 0) { return $true }
+    if (-not $claim.hasClaim -and $claimedZones.Count -eq 0) { return $true }
 
     if ($EffectiveLegs.PSObject.Properties.Name -contains 'executableZones' -and $null -ne $EffectiveLegs.executableZones) {
         $runnableZones = @($EffectiveLegs.executableZones)
+        $unknown = [bool](Get-ChaosMember -InputObject $EffectiveLegs -Name unknownTargetZones)
+        $outside = @($runnableZones | Where-Object { $claimedZones -notcontains $_ })
+        if (-not $unknown -and $runnableZones.Count -gt 0 -and $outside.Count -eq 0) { return $true }
     } else {
         # Legacy legs have no target set; retain their selector-based contract.
         $executableText = (@($EffectiveLegs.executableSelectors) -join ' ')
         $runnableZones = @([regex]::Matches($executableText, '(?i)zone[\s_-]?([0-9]+)') | ForEach-Object { $_.Groups[1].Value })
         $runnableZones += @([regex]::Matches($executableText, '(?i)\baz([0-9]+)\b') | ForEach-Object { $_.Groups[1].Value })
+        $missing = @($claimedZones | Where-Object { $runnableZones -notcontains $_ })
+        if ($claimedZones.Count -gt 0 -and $missing.Count -eq 0) { return $true }
     }
     $runnableZones = @($runnableZones | Where-Object { $_ } | Select-Object -Unique)
 
-    $missing = @($claimedZones | Where-Object { $runnableZones -notcontains $_ })
-    if ($missing.Count -eq 0) { return $true }
-
-    Write-ChaosStudyFailure -Title 'Scenario name claims a zone that will not run' -Message @"
-The scenario name '$ScenarioName' names zone(s) $($missing -join ', '), but the
-preflight execution plan has no executable leg for $(if ($missing.Count -gt 1) { 'those zones' } else { 'that zone' }).
-Running it would produce a report whose title overstates what was exercised, so
-scoping stops here.
+    Write-ChaosStudyFailure -Title 'Declared zones do not match execution targets' -Message @"
+Scenario '$ScenarioName' declares zone(s) $($claimedZones -join ', ') through
+$(if ($claim.hasClaim) { $claim.source } else { 'its unambiguous zone-bearing name' }).
+Every executable target must report known metadata.zones within that boundary.
+An unknown or out-of-bound target cannot be authorized.
 
 Executable legs cover zone(s): $(if ($runnableZones.Count -gt 0) { $runnableZones -join ', ' } else { '(none identifiable)' }).
-"@ -Remediation 'Choose a scenario whose name matches the zones actually in scope, or widen the scope so the named zone has an executable leg.'
+"@ -Remediation 'Reconcile the declared zone parameters or filters with the live execution targets, then re-scope.'
     if ($OnScopeUnverified) { & $OnScopeUnverified | Out-Null }
     exit (Get-ChaosStudyExitCode -Name 'ScopeUnverified')
 }

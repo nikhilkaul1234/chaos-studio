@@ -1,0 +1,67 @@
+{
+  "id": "/subscriptions/fb74b135-894b-4c1d-9b2e-8a3c231abc14/providers/Microsoft.Chaos/locations/westus2/actions/microsoft-compute-shutdown",
+  "name": "microsoft-compute-shutdown",
+  "properties": {
+    "actionName": "shutdown",
+    "actionType": "Cancelable",
+    "canonicalId": "urn:csci:microsoft:compute:shutdown/1.0.0",
+    "description": "",
+    "displayName": "shutdown",
+    "parametersSchema": {
+      "$schema": "http://json-schema.org/draft-04/schema#",
+      "additionalProperties": false,
+      "properties": {
+        "GracefulShutdown": {
+          "description": "Indicates whether to perform a graceful shutdown of the virtual machines.",
+          "type": "boolean"
+        },
+        "Zones": {
+          "description": "Zones to shutdown instances in. Applicable for VMSS targets only.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "title": "ShutdownParameters",
+      "type": "object"
+    },
+    "recommendedRoles": [
+      "9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+    ],
+    "supportedTargetTypes": [
+      {
+        "requiredPermissions": [
+          "Microsoft.Compute/virtualMachines/powerOff/action",
+          "Microsoft.Compute/virtualMachines/start/action",
+          "Microsoft.Compute/virtualMachines/instanceView/read",
+          "Microsoft.Compute/virtualMachines/read",
+          "Microsoft.Compute/locations/operations/read"
+        ],
+        "targetType": "Microsoft.Compute/virtualMachines"
+      },
+      {
+        "requiredPermissions": [
+          "Microsoft.Compute/virtualMachineScaleSets/poweroff/action",
+          "Microsoft.Compute/virtualMachineScaleSets/start/action",
+          "Microsoft.Compute/virtualMachineScaleSets/instanceView/read",
+          "Microsoft.Compute/virtualMachineScaleSets/read",
+          "Microsoft.Compute/locations/operations/read",
+          "Microsoft.Compute/virtualMachines/powerOff/action",
+          "Microsoft.Compute/virtualMachines/start/action",
+          "Microsoft.Compute/virtualMachines/instanceView/read",
+          "Microsoft.Compute/virtualMachines/read"
+        ],
+        "targetType": "Microsoft.Compute/virtualMachineScaleSets"
+      }
+    ],
+    "version": "1.0.0"
+  },
+  "systemData": {
+    "createdByType": "Application"
+  },
+  "type": "Microsoft.Chaos/locations/actions"
+}
