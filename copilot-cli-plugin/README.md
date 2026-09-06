@@ -59,6 +59,29 @@ session for auth.
 | `setup-scenario` | Discover, configure, validate scenarios |
 | `run-scenario` | Execute and stream experiment results |
 | `chaos-impact` | Analyze run impact — correlate Azure Monitor signals to targeted resources |
+| `chaos-study` | Design, scope, preview, run, and report a bounded reliability study |
+| `chaos-study-design` | Prepare evidence and collect human design confirmation |
+| `chaos-study-scope` | Live discovery, preflight, telemetry calibration, and a frozen approval preview |
+| `chaos-study-run` | Plan-bound approval, signal-based abort, evidence, and recorded cleanup |
+| `chaos-study-report` | Interpret persisted evidence and render/seal reports |
+| `chaos-study-history` | Inspect, compare, and print rerun commands |
+
+### Study hosts and SRE Agent
+
+The six `chaos-study*` directories form a self-contained skill suite for
+PowerShell-capable hosts. SRE Agent accepts the skill files and exposes
+PowerShell through `RunInTerminal`, but its terminal **does not inherit brokered
+Azure credentials**. Read-only listing and scope discovery before preflight may
+be usable through `-Adapter external` and an authorized executor. History/report
+read local artifacts without an adapter argument or Azure credentials. This is
+not an end-to-end armed-host claim.
+
+External armed runs remain unsupported until the D4 execution/resume path is
+implemented. The code refuses external armed mode, consent, permission approval,
+and mutating operation requests with exit `22`. Full live scope includes
+preflight mutation and cannot complete externally. Use an authenticated
+`local-az` host for preflight/execution, with fresh human approval.
+See the [study host and result-file contract](skills/chaos-study/SKILL.md).
 
 ## MCP tools (for agents)
 

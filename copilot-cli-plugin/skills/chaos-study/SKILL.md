@@ -1,198 +1,184 @@
 ---
 name: chaos-study
-description: "Run a complete Chaos reliability study against an Azure workspace scope: frame a falsifiable steady-state question, discover the actions Chaos Studio actually offers for that region live, freeze a plan, execute a validated scenario configuration with explicit consent, collect before/during/after evidence, and produce a self-contained HTML report. Start here for 'is my service actually resilient to X?' questions."
+description: "Plan, preview, run, and report a bounded Chaos Studio V2 reliability study. Use live discovery, a frozen plan, fresh human approval, signal-based abort, and persisted evidence. Dry-run by default; external adapters are read-only."
 ---
 
-# chaos-study — reliability studies, end to end
+# chaos-study
 
-Chaos engineering is an experiment in the scientific sense, not a stunt. This
-skill runs it: it asks a question that can be proven **wrong**, executes a real
-action against real resources, and reports what the evidence actually showed.
+Test one falsifiable steady-state question against a defined workspace scope.
+Keep observations, assumptions, and missing evidence distinct. A successful
+control-plane call is not proof that the workload was exercised or recovered.
 
-> Does **`<steady state>`** hold when I execute **`<action>`** across
-> **`<workspace scope>`**?
+## Prepare once; preserve the human stops
 
-You do not need that sentence to start — the front door builds it with you.
-"Test resilience" is not a study: nothing could falsify it.
+Read the available code, deployment, dependencies, resilience behavior,
+persistence, workload, telemetry, and identity in **one preparation pass**.
+Record citations or explicit unavailability, then prepare the observation and
+candidate files. Reuse those artifacts instead of repeating the analysis at
+each question.
 
-## Principles
-
-**A study is a falsifiable claim.** Every study needs a steady-state predicate
-measurable beforehand that could plausibly break during the run.
-
-**What to test is decided before it is scoped, and never by this skill alone.**
-Picking an action because it is available is how studies end up proving nothing.
-The front door therefore *always* runs design first: it reads the system, then
-stops and asks you, one question at a time, until the purpose and the risk you
-will accept are stated in your own words and confirmed. There is no flag that
-skips the interview.
-
-**The platform decides what is possible, not this plugin.** The available
-actions are read live from Chaos Studio for the workspace's region, every time.
-This suite ships **no** action catalogue, and there is no offline fallback: if
-the service cannot be asked, scoping stops with exit `16` rather than guessing.
-Likewise the resources a run will touch come from the workspace's discovered
-resources, not from an assertion in the plan.
-
-**Evidence beats vibes.** A verdict is only as good as the signals behind it. If
-a signal was not collected, the report says *not measured* — never `0`, never a
-plausible-looking guess.
-
-**Nothing runs without consent.** `-DryRun` defaults to `$true`. Arming a study
-takes both `-DryRun:$false` and typing back the exact phrase the plan prints.
-There is no flag that skips this.
-
-**Blast radius is bounded before it is armed.** Workspace, scope, filters,
-exclusions, action, parameters and duration are frozen into the plan and hashed.
-If the plan changed after you approved it, the run refuses.
-
-## The six skills
-
-This is a suite, not a monolith. Use the front door — it is the only path that
-enforces the design gate. Calling a phase skill directly is the expert escape
-hatch and skips that enforcement deliberately.
-
-| Skill | Owns |
-| --- | --- |
-| **chaos-study** | chains the phases below; the default entry point |
-| **chaos-study-design** | reading the system, interviewing you, recommending what to test |
-| **chaos-study-scope** | workspace, scope, live action discovery, freezing the plan |
-| **chaos-study-run** | configuration, validation, consent, execution, evidence |
-| **chaos-study-report** | interpretation, findings, the HTML report |
-| **chaos-study-history** | list, compare, and re-run past studies |
-
-Each phase persists its own output, so a chain that fails partway resumes there.
-
-## Usage
-
-**1. Name the system. That is all you start with.** The front door always opens
-the design phase first: it reads the system, ranks candidate hypotheses against
-real dependency edges, then holds the study at **exactly one question**:
+The CLI still enforces its design sequence. Exit `26` opens one customer
+question; relay it through the host's interactive mechanism and submit the
+customer's answer with `-QuestionId` / `-Answer`. Exit `24` means the design is
+incomplete. One preparation pass does **not** batch or bypass these questions.
 
 ```powershell
 ./scripts/Invoke-ChaosStudy.ps1 -System orders-api `
-    -SubscriptionId $sub -ResourceGroup rg-prod -WorkspaceName ws-payments
+    -SubscriptionId $sub -ResourceGroup rg-prod -WorkspaceName ws-payments `
+    -StudyRoot $store -Adapter local-az
+# Continue the same brief with the observation/candidate files or the requested
+# QuestionId, Answer, Select, and ConfirmPhrase. Keep the workspace inputs.
 ```
 
-Exit **26** means the study is open and waiting on a person — not that it
-failed. One question is printed, and repeated in a `CHAOS-QUESTION` JSON block.
-**Put that question to the customer with `ask_user`** (or your host's equivalent
-interactive mechanism), wait for the reply, then resume the same brief:
+Review the selected candidate before returning the exact `-ConfirmPhrase`
+printed by design (`study <candidateId> on <system> <hash8>`). It confirms the
+design, not injection or RBAC changes. Direct phase scripts remain available;
+they do not enforce the front door's design interview.
+
+## Discover, scope, and preview
+
+Use `-ListActions` / `-ListScenarios` with the workspace inputs to read the
+service's current choices. Do not substitute a bundled catalog or invent an
+action, role, or parameter. A confirmed design proceeds to
+[scope](../chaos-study-scope/SKILL.md), which may create a preflight
+configuration and validate it; this is not a read-only Azure phase.
+
+If the effective plan is partial, review its skipped legs before providing
+`-AcceptPartialScenario 'accept partial scenario <N> of <M> <hash8>'`.
+That phrase accepts reduced coverage, not injection. Refused preflights record
+bounded cleanup; a failed deletion remains unresolved in the ledger.
+
+Review the frozen parameters, filters/exclusions, declared zone boundary,
+projected resources, telemetry-lag samples, abort rules, restoration duties,
+configuration lifecycle, and exact RBAC preview. `L16` warns that resources with
+unknown local zones were retained in the conservative projection; service
+filtering and executable-target metadata govern the zone boundary.
+
+## Resume the exact study; approve separately
 
 ```powershell
-./scripts/Invoke-ChaosStudy.ps1 -System orders-api -BriefId <id> `
-    -QuestionId <id from the block> -Answer '<what they actually said>'
+./scripts/Invoke-ChaosStudy.ps1 -StudyId '<studyId>' -StudyRoot $store
 ```
 
-One question per turn. Do not batch them, do not print a questionnaire, do not
-answer on the customer's behalf, and do not fall through to scoping. Exit **24**
-means the answer was too vague to test and the same question is still open.
-Passing `-Scenario`/`-Action` up front does **not** bypass any of this: nothing
-is scoped until the brief is `CONFIRMED` by the customer.
+This resumes the recorded study without new design or scoping. The default
+dry-run does not query Azure or create a configuration.
 
-**2. Ask the platform what it can do here.** The answer depends on the region and
-what is in scope, and changes as Chaos Studio ships new actions:
+Only a human may provide the freshly reviewed injection phrase:
 
 ```powershell
-./scripts/Invoke-ChaosStudy.ps1 -ListActions `
-    -SubscriptionId $sub -ResourceGroup rg-prod -WorkspaceName ws-payments
-# ...and -ListScenarios for the scenarios the workspace recommends
+./scripts/Invoke-ChaosStudy.ps1 -StudyId '<studyId>' -StudyRoot $store `
+    -Adapter local-az -DryRun:$false `
+    -Consent '<exact phrase from this preview>'
+# If the preview requires RBAC changes, also provide:
+# -ApprovePermissions '<exact grant-access phrase from this preview>'
 ```
 
-Each action is printed with its canonical id, type, what it applies to and its
-parameter schema — all as the service reported them.
+Consent has the form `inject <action> into <workspace> <planHash> approval
+<previewHash>`. The separate RBAC phrase is `grant access on <workspace>
+<grantHash8>`. Copy the actual phrases; never construct or self-confirm them.
+`approval-preview.v1.json` must match the plan, be ready, and be unconsumed.
+It is consumed before the execution attempt. Re-scope for a new attempt rather
+than reusing a consumed phrase; `-Force` does not bypass that boundary.
 
-**3. Plan and preview.** Once the brief is confirmed the same command carries on
-into scoping and stops there, executing nothing. Read the preview: what is in
-scope after filters and exclusions, the windows, and the configuration that
-would be created. Overrides such as `-SteadyState` apply on top of the brief.
-**4. Arm it.** Only after the preview matches your intent:
+Offline plans cannot arm. Plan drift, changed signal sources, unready previews,
+non-success validation, and incompatible artifact generations stop execution.
+Only concrete repairable permission errors can request what-if. A backend
+`InternalError` does not authorize permission repair.
 
-```powershell
-./scripts/Invoke-ChaosStudy.ps1 ... -DryRun:$false -Consent '<phrase from the preview>'
-```
+## Host contract: actual outputs
 
-## Reading the verdict
+There is **no universal `CHAOS-RESULT` envelope** emitted by these scripts.
+Use the process exit code, printed artifact paths, and persisted JSON. Design
+questions use the existing `CHAOS-QUESTION-BEGIN` / `CHAOS-QUESTION-END` block.
+Do not infer success from prose or manufacture missing artifacts.
 
-| Verdict | Means |
+| Artifact | Fields the host reads |
 | --- | --- |
-| **Steady state held** | The action landed and the objective survived it |
-| **Degraded but recovered** | Breached during the run, recovered afterwards |
-| **Steady state breached** | Breached and still breached after recovery |
-| **Not exercised** | The action never applied enough work to test anything |
-| **Inconclusive** | The action could not be proven to have landed |
+| `briefs/<briefId>/study-brief.v1.json` | `briefVersion`, `state`, `analysis`, `candidates`, `interview`, `confirmation`, `briefHash` |
+| `<scopeHash>/<studyId>/study-plan.v4.json` | `planVersion`, `workspace`, `scope`, `scenario`, `action`, `windows`, `signals`, `safety.abortConditions`, `discovery.telemetryLag`, `readiness`, `frozenConfigHash` |
+| `approval-preview.v1.json` | `previewId`, `previewHash`, `planHash`, `approvalReady`, `consumedAt`, `configuration`, `projectedResources`, `validation`, `permissionFix` |
+| `run-record.v3.json` | `recordVersion`, `planHash`, `collectionState`, `scenarioRun` (including failure/abort), `windows`, `evidence`, `coverage`, `residue` |
+| `residue-ledger.json` | `ledgerVersion`, `entries[].kind/id`, `entries[].cleanup.status/error/observation` |
+| `evidence/` and `commands.jsonl` | collected signals, preflight failures, live abort checks/cancellation, command trail |
+| `findings.v2.json` | `predicateVerdict`, `studyVerdict`, `findings`, `limitations` |
+| `manifest.json`, `SEALED` | seal identity, `files` hashes, `contentHash`; a final hash-bearing `report-<studyId>.html` is rendered beside the sealed directory |
 
-Severity follows recovery, not drama: a breach that never recovers is `critical`;
-the same breach that self-heals is `medium`.
+The store may contain incomplete or failed studies. A checkpoint with
+`collectionState: recovery-pending` is not a completed run. Report missing
+observations as unknown; do not equate absent recovery with recovery.
 
-## Choosing signals
+## External result-file exchange and SRE Agent
 
-The suite collects only what you name, because what counts as evidence depends
-on the system under study. Two forms:
+SRE Agent accepts the skill files and exposes PowerShell through
+`RunInTerminal`, but its terminal does **not** inherit brokered Azure
+credentials. Read-only listing and the discovery portion of scope before
+preflight may be usable with an external executor. History/report read local
+artifacts and need neither Azure credentials nor an adapter argument. This is
+not an end-to-end armed-host claim.
 
-- `metrics:<name>` — an Azure Monitor metric on the single scoped resource, or
-  `@<resourceId>` to pin one, `|<aggregation>` to override the aggregation. A
-  scope holding several resources has no implied metric target, so pin it.
-- `logs:<workspaceId>#<kql>` — a Log Analytics query
+`-Adapter external` supports **read-only phases only**. Armed mode, `-Consent`,
+`-ApprovePermissions`, and mutating operation kinds are refused with exit `22`.
+Full live scope cannot complete externally because preflight creates and
+validates a configuration. Offline scope is non-executable. External armed
+runs remain unsupported until the D4 execution/resume work is implemented.
 
-Name at least one signal expected to *move* under the action. That is what
-separates "resilient" from "the action never landed". Scoping checks readiness
-first: a study whose objective cannot be measured, or whose parameters do not
-satisfy the live schema, teaches nothing, so exit `10` is a real answer.
+For an allowed read, exit `18` leaves
+`operations/<operationId>.request.json` under the printed study/staging path.
+Read its `kind`, `tool`, `method`, `args`, `body`, `expectedResultSchema`,
+`operationId`, and `requestHash`. Execute that exact read with authorized
+credentials, then write `operations/<operationId>.result.json`:
 
-## Progressive discovery
+```json
+{
+  "operationId": "<copied from request>",
+  "requestHash": "<copied from request>",
+  "result": "<actual operation payload, not a summary>"
+}
+```
 
-Action identifiers, parameters and required permissions are **not** documented
-here, because they are the service's to state and this plugin's to relay. Get
-them from `-ListActions` — Kubernetes/AKS guidance is deliberately absent until
-those actions appear there. What lives here is the method:
+The `result` placeholder represents JSON, not a required string:
 
-- **`references/design-method.md`** — how a study is chosen before it is scoped
-- **`references/study-method.md`** — the six-phase method and why it is split
-- **`references/report-contract.md`** — what the report may and may not claim
+- Chaos CLI reads and `auth.probe`: raw parsed CLI JSON, preserving `[]`.
+- ARM REST reads (`actions.list`, `resource.get`, `metrics.query`,
+  `roleAssignments.list`): `{ "body": <response JSON>, "headers": {} }`;
+  include headers only if actually captured.
+- `logs.query`: raw Log Analytics JSON (including `tables`), not that wrapper.
+- `validation.v2`: flattened or ARM `properties` validation fields are
+  normalized by the receiver.
+
+Re-run the same read command after writing its result. The receiver checks
+request identity and schema and records a result digest in
+`operations/provenance.jsonl`. Identical requests reuse stored results; do not
+describe that cache as fresh polling. If the host read fails, surface the
+failure rather than storing invented/null success.
 
 ## Exit codes
 
-| Code | Meaning |
+This is the shared table for the six study skills; phase guides link here.
+
+| Code | Meaning / required response |
 | --- | --- |
-| `0` | Success |
-| `1` | Error |
-| `10` | Readiness gates failed |
-| `11` | Consent declined or phrase mismatch |
-| `12` | Plan changed after it was frozen |
-| `13` | Study or brief already sealed |
-| `14` | Scope unverified — nothing in scope, or the action does not fit it |
-| `15` | Studies not comparable |
-| `16` | Live action discovery unavailable — there is no fallback |
-| `17` | Scenario configuration failed validation |
-| `18` | Paused: an Azure operation must be executed by the host, then resumed |
-| `19` | Paused: role assignments need their own, separate approval |
-| `20` | Scenario would run fewer legs than it declares, and that was not accepted |
-| `21` | The run would not exercise the failure often enough to mean anything |
-| `22` | No adapter can reach Azure — say which one to use |
-| `23` | Study was written by an older contract version |
-| `24` | Design incomplete — an unread area, a vague answer, or a missing field |
-| `25` | A past study cannot be re-run exactly, so no command was printed |
-| `26` | **Paused: waiting on the customer.** One question is open — ask it |
+| `0` | Phase completed, including dry-run; inspect its artifacts |
+| `1` | Error; stop and inspect diagnostics |
+| `4` | Broad permission change lacks consent (shared exit contract) |
+| `10` | Readiness failed; correct the reported input/evidence gap |
+| `11` | Missing, mismatched, unready, or consumed consent/preview |
+| `12` | Frozen plan or execution inputs drifted |
+| `13` | Study/brief already sealed or confirmed |
+| `14` | Execution scope cannot be verified, including zone mismatch |
+| `15` | Studies are not comparable |
+| `16` | Live action discovery unavailable; do not substitute a catalog |
+| `17` | Configuration validation failed; preserve the service error |
+| `18` | Read-only host operation pending; satisfy its exact request |
+| `19` | Separate permission approval required; inspect the exact grants |
+| `20` | Partial scenario not accepted; review the skipped legs |
+| `21` | Insufficient exercise exposure; revise inputs or explicitly accept the weak exercise |
+| `22` | Adapter unavailable or external operation unsupported |
+| `23` | Incompatible/read-only artifact generation; create a new study |
+| `24` | Design incomplete or answer rejected |
+| `25` | Rerun cannot reproduce the frozen inputs |
+| `26` | Customer input required; ask the printed question or confirmation |
 
-`18`, `19` and `21` are **pauses, not failures**. Each names the one thing it
-needs; supply it and re-run the same command. Do not fill in the missing part
-yourself — a study that cannot show where its evidence came from cannot be sealed.
-
-## Running where `az` is not usable
-
-Every Azure call goes through one adapter seam, selected with `-Adapter`:
-`local-az` runs `az` in-process; `external` cannot, so it writes each operation
-into the study's `operations/` directory and exits `18`. Under `external` you are
-the executor: read the pending request, run exactly that call with your own
-authenticated tooling, write the response back as the matching result file, and
-re-run the identical command. Results are bound to the request hash and folded
-into the study's provenance; resuming is idempotent.
-
-## Notes
-
-- Chaos Studio **V2** only: workspaces are the lifecycle root and resource
-  selection flows through workspace scopes. There is no V1 path or fallback.
-- Core is `az` / Azure Resource Manager: no SRE Agent or MCP dependency.
-- Sealed studies are immutable — re-testing scopes a **new** study.
-- Parameterised scenarios (`-Parameters`) are planned via `chaos-study-scope` directly.
+No nonzero exit authorizes falling through to the next phase. A pause is still
+a stop. The hard-stop and artifact regressions live in
+[tests](tests/), with effective-leg coverage in the scope/run test directories.
